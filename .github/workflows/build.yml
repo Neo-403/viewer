@@ -38,16 +38,20 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
+        # Temporarily build Windows only. Linux/macOS entries are kept (commented)
+        # so restoring the full matrix is a two-line change; all of their steps
+        # are gated on runner.os and simply never run while disabled. The iOS
+        # job below is already `if: false`. Android has its own job and stays on.
         include:
           - os: windows-latest
             rid: win-x64
             archive: zip
-          - os: ubuntu-latest
-            rid: linux-x64
-            archive: tar.gz
-          - os: macos-15
-            rid: osx-arm64
-            archive: tar.gz
+          # - os: ubuntu-latest
+          #   rid: linux-x64
+          #   archive: tar.gz
+          # - os: macos-15
+          #   rid: osx-arm64
+          #   archive: tar.gz
     runs-on: ${{ matrix.os }}
     name: build (${{ matrix.rid }})
     steps:
@@ -150,12 +154,17 @@ jobs:
           cd publish/${{ matrix.rid }}
           tar -czf ../../openipc-viewer-${{ matrix.rid }}.tar.gz .
 
+      # GitHub Actions retention is day-granular (minimum 1 day), so the real
+      # "delete after 6 hours" policy lives in cleanup-artifacts.yml. The
+      # retention-days below is the hard backstop in case scheduled runs are
+      # paused (forks, 60-day inactivity).
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: openipc-viewer-${{ matrix.rid }}
           path: openipc-viewer-${{ matrix.rid }}.*
           if-no-files-found: error
+          retention-days: 1
 
   android:
     runs-on: ubuntu-latest
@@ -310,6 +319,7 @@ jobs:
           name: openipc-viewer-android-arm64
           path: publish/android-arm64/*-Signed.apk
           if-no-files-found: error
+          retention-days: 1
 
       - name: Upload artifact (x64)
         uses: actions/upload-artifact@v4
@@ -317,6 +327,7 @@ jobs:
           name: openipc-viewer-android-x64
           path: publish/android-x64/*-Signed.apk
           if-no-files-found: error
+          retention-days: 1
 
   ios:
     runs-on: macos-15
@@ -373,6 +384,7 @@ jobs:
             publish/ios-arm64/**/*.ipa
             publish/ios-arm64/**/*.app
           if-no-files-found: warn
+          retention-days: 1
 
   release:
     needs: [build, android]

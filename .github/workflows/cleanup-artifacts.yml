@@ -1,0 +1,59 @@
+name: cleanup-old-artifacts
+
+# upload-artifact's `retention-days` is day-granular (minimum 1 day), so the
+# requested "delete after 6 hours" policy cannot be expressed there. build.yml
+# uses 1 day as a hard backstop; this workflow does the precise deletion via
+# the REST API. Scheduled runs are only kept alive while the repo is active,
+# which is why the backstop matters.
+on:
+  schedule:
+    # Twice an hour → an artifact lives 6h..6.5h in practice.
+    - cron: '7,37 * * * *'
+  workflow_dispatch:
+    inputs:
+      max_age_hours:
+        description: 'Delete artifacts older than this many hours'
+        required: false
+        default: '6'
+
+permissions:
+  actions: write
+
+# A manual run must not race the scheduled one into duplicate DELETEs.
+concurrency:
+  group: cleanup-old-artifacts
+  cancel-in-progress: false
+
+jobs:
+  cleanup:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Delete artifacts older than the cutoff
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          # On schedule events `inputs` is empty, so fall back to the default.
+          MAX_AGE_HOURS: ${{ inputs.max_age_hours || '6' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          case "${MAX_AGE_HOURS}" in
+            ''|*[!0-9]*) echo "Invalid max_age_hours: ${MAX_AGE_HOURS}" >&2; exit 1 ;;
+          esac
+          cutoff=$(date -u -d "-${MAX_AGE_HOURS} hours" +%Y-%m-%dT%H:%M:%SZ)
+          echo "Deleting artifacts created before ${cutoff}"
+          # ISO-8601 UTC timestamps compare correctly as strings. Skip expired
+          # ones: GitHub already removed them and DELETE would 404.
+          ids=$(gh api --paginate "repos/${GH_REPO}/actions/artifacts?per_page=100" \
+            --jq ".artifacts[] | select(.expired == false) | select(.created_at < \"${cutoff}\") | .id")
+          if [ -z "${ids}" ]; then
+            echo "Nothing to delete."
+            exit 0
+          fi
+          count=0
+          for id in ${ids}; do
+            gh api -X DELETE "repos/${GH_REPO}/actions/artifacts/${id}" > /dev/null \
+              || echo "artifact ${id} already gone"
+            count=$((count + 1))
+          done
+          echo "Deleted ${count} artifact(s)."
