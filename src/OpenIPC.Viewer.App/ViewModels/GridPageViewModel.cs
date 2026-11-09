@@ -371,10 +371,26 @@ public sealed partial class GridPageViewModel : ViewModelBase,
 
     partial void OnStillsIntervalSecondsChanged(int value) => _ = ApplyStillsChangeAsync();
 
+    // The two RadioButtons and the interval ComboBox all write through this
+    // path, and every write is fire-and-forget. Serialise them so two rebuilds
+    // can't race over Tiles, and a slower Persist can't write back a stale
+    // snapshot of the settings.
+    private readonly SemaphoreSlim _stillsApplyGate = new(1, 1);
+
     private async Task ApplyStillsChangeAsync()
     {
-        await PersistStillsAsync().ConfigureAwait(true);
-        await RebuildTilesAsync().ConfigureAwait(true);
+        await _stillsApplyGate.WaitAsync().ConfigureAwait(false);
+        try
+        {
+            await PersistStillsAsync().ConfigureAwait(true);
+            // RefreshTilesAsync now detects a mode/interval mismatch and
+            // rebuilds just those tiles. No separate full teardown that could
+            // race the UserSettingsService.Changed refresh and leave the
+            // toolbar showing one value while tiles still use the old one.
+            await RefreshTilesAsync(CancellationToken.None).ConfigureAwait(true);
+        }
+        catch (Exception ex) { _logger.LogWarning(ex, "Applying stills settings failed"); }
+        finally { _stillsApplyGate.Release(); }
     }
 
     private async Task PersistStillsAsync()
@@ -382,7 +398,9 @@ public sealed partial class GridPageViewModel : ViewModelBase,
         _suppressSettingsRefresh = true;
         try
         {
-            await _userSettings.UpdateAsync(_userSettings.Current with
+            // Functional update reads Current inside the save gate, so another
+            // page persisting a different field can't clobber these two.
+            await _userSettings.UpdateAsync(s => s with
             {
                 GridStillsMode = StillsMode,
                 GridStillsIntervalSeconds = StillsIntervalSeconds,
@@ -390,20 +408,6 @@ public sealed partial class GridPageViewModel : ViewModelBase,
         }
         catch (Exception ex) { _logger.LogWarning(ex, "Persisting stills settings failed"); }
         finally { _suppressSettingsRefresh = false; }
-    }
-
-    // Full teardown + rebuild so tiles pick up the new stills mode/interval —
-    // RefreshTilesAsync reuses live tiles and wouldn't re-read the flag.
-    private async Task RebuildTilesAsync()
-    {
-        for (var i = Tiles.Count - 1; i >= 0; i--)
-        {
-            var tile = Tiles[i];
-            Tiles.RemoveAt(i);
-            try { await tile.DisposeAsync().ConfigureAwait(true); }
-            catch (Exception ex) { _logger.LogWarning(ex, "Error disposing tile during stills rebuild"); }
-        }
-        await RefreshTilesAsync(CancellationToken.None).ConfigureAwait(true);
     }
 
     private async Task RefreshTilesAsync(CancellationToken ct)
@@ -479,10 +483,14 @@ public sealed partial class GridPageViewModel : ViewModelBase,
             var existing = Tiles.FirstOrDefault(t => t.Camera.Id == camera.Id);
             if (existing is not null)
             {
-                // Rebuild on a stream-URL change OR an analytics-settings change:
-                // the tile holds an immutable Camera snapshot, so toggling
-                // analytics in the editor only takes effect by rebuilding it.
-                if (!StreamUriChanged(existing.Camera, camera) && !AnalyticsChanged(existing.Camera, camera))
+                // Rebuild on a stream-URL change, an analytics-settings change,
+                // or a stills mode/interval change: the tile holds an immutable
+                // Camera snapshot AND captures the stills settings at
+                // construction, so keeping it would ignore the new interval.
+                if (!StreamUriChanged(existing.Camera, camera)
+                    && !AnalyticsChanged(existing.Camera, camera)
+                    && existing.StillsMode == StillsMode
+                    && existing.StillsIntervalSeconds == StillsIntervalSeconds)
                 {
                     // Kept tile — re-evaluate SD/HD against the (possibly new)
                     // layout. No-op when quality is unchanged.

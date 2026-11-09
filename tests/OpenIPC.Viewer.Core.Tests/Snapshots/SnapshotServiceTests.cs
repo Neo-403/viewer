@@ -76,6 +76,42 @@ public sealed class SnapshotServiceTests
         Assert.Equal("SUB", File.ReadAllText(snap.Path));
     }
 
+    // --- grid stills mode (grab a frame, never a live session, never a file) ---
+
+    [Fact]
+    public async Task GrabFrame_DoesNotPersist_WhenMajesticAnswers()
+    {
+        var (svc, ctx) = Build(majesticBytes: Bytes("HTTP"), freshFrame: null);
+
+        var frame = await svc.GrabFrameAsync(Cam(majestic: true), CancellationToken.None);
+
+        Assert.Equal("HTTP", System.Text.Encoding.ASCII.GetString(frame!));
+        Assert.Empty(ctx.Repo.Added); // refreshing every N seconds must not fill the gallery
+    }
+
+    [Fact]
+    public async Task GrabFrame_FallsBackToOneRtspFrame_ForUnprobedCameras()
+    {
+        // Hand-added / imported cameras have IsMajestic=false. They still need a
+        // still; returning nothing made the grid silently play live RTSP.
+        var (svc, ctx) = Build(majesticBytes: null, freshFrame: Bytes("OPEN"));
+
+        var frame = await svc.GrabFrameAsync(Cam(majestic: false), CancellationToken.None);
+
+        Assert.Equal("OPEN", System.Text.Encoding.ASCII.GetString(frame!));
+        Assert.Empty(ctx.Repo.Added);
+    }
+
+    [Fact]
+    public async Task GrabFrame_ReturnsNull_WhenEverySourceFails()
+    {
+        var (svc, _) = Build(majesticBytes: null, freshFrame: null);
+
+        var frame = await svc.GrabFrameAsync(Cam(majestic: false), CancellationToken.None);
+
+        Assert.Null(frame); // caller keeps the previous still on screen
+    }
+
     // --- harness ---
 
     private static byte[] Bytes(string s) => System.Text.Encoding.ASCII.GetBytes(s);

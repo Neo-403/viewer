@@ -45,10 +45,15 @@ public sealed partial class CameraTileViewModel : ViewModelBase, IAsyncDisposabl
 
     [ObservableProperty] private Bitmap? _stillFrame;
 
-    // Drives the template: Image (stills) vs RtspVideoView (live). A camera with
-    // no cheap HTTP still (non-Majestic) stays on live RTSP even when the grid
-    // stills toggle is on, rather than blanking to an empty tile.
-    public bool StillsMode => _stillsMode && _frameSource.Supports(Camera);
+    // Drives the template: Image (stills) vs RtspVideoView (live). This is a
+    // pure grid preference — it must NOT be gated on camera capabilities.
+    // Previously it also required a positive IsMajestic capability probe,
+    // which made every unprobed / hand-added camera silently fall back to a
+    // live RTSP session: the stills toggle and its interval did nothing.
+    // Cameras without an HTTP still now fall back to a one-frame RTSP grab in
+    // RunStillsAsync, which is still a still, never a live stream.
+    public bool StillsMode => _stillsMode;
+    public int StillsIntervalSeconds => _stillsIntervalSeconds;
 
     // On a stream fault we TCP-probe the camera so the status policy can tell a
     // wedged-but-alive camera (Attention) from a truly unreachable one (Offline).
@@ -122,17 +127,26 @@ public sealed partial class CameraTileViewModel : ViewModelBase, IAsyncDisposabl
     public CameraStatus Status =>
         CameraStatusPolicy.Resolve(new CameraStatusInputs(State, PortReachable)).Status;
 
-    public string StateLabel => Status == CameraStatus.Attention
-        ? "ATTENTION"
-        : State switch
+    // A stills tile has no session (State stays Idle), but showing "IDLE" there
+    // made the mode look broken. Label it explicitly so the toggle is verifiable
+    // at a glance — and so a tile that still says LIVE is an obvious regression.
+    public string StateLabel
+    {
+        get
         {
-            SessionState.Playing => "LIVE",
-            SessionState.Connecting => "CONNECTING…",
-            SessionState.Reconnecting => "RECONNECTING…",
-            SessionState.Paused => "PAUSED",
-            SessionState.Failed => "OFFLINE",
-            _ => "IDLE",
-        };
+            if (StillsMode) return Localizer.Instance["Grid.Mode.Stills"];
+            if (Status == CameraStatus.Attention) return "ATTENTION";
+            return State switch
+            {
+                SessionState.Playing => "LIVE",
+                SessionState.Connecting => "CONNECTING…",
+                SessionState.Reconnecting => "RECONNECTING…",
+                SessionState.Paused => "PAUSED",
+                SessionState.Failed => "OFFLINE",
+                _ => "IDLE",
+            };
+        }
+    }
 
     // Mid-connect dim overlay (spinner). Gated on Session so the pre-activate
     // window doesn't flash a spinner out of nowhere.
@@ -299,7 +313,7 @@ public sealed partial class CameraTileViewModel : ViewModelBase, IAsyncDisposabl
 
     public async Task ActivateAsync(CancellationToken ct)
     {
-        if (_started) return;
+        if (_started || _disposed) return;
         _started = true;
 
         // Stills mode: no decoder, just poll an HTTP snapshot on an interval.
@@ -507,7 +521,15 @@ public sealed partial class CameraTileViewModel : ViewModelBase, IAsyncDisposabl
 
     private void StartStillsLoop()
     {
+        // ActivateAsync can be re-entered (coordinator invalidation, quality
+        // swap, retry). Cancel the previous loop before starting another —
+        // otherwise N loops post StillFrame independently and the tile refreshes
+        // at ~N/interval, looking live again. DisposeAsync only sees the last
+        // CTS, so a stale loop would also keep grabbing after the tile is gone.
+        var previous = _stillsCts;
         _stillsCts = new CancellationTokenSource();
+        previous?.Cancel();
+        previous?.Dispose();
         _ = RunStillsAsync(_stillsCts.Token);
     }
 
@@ -518,7 +540,11 @@ public sealed partial class CameraTileViewModel : ViewModelBase, IAsyncDisposabl
         {
             try
             {
-                var bytes = await _frameSource.GrabAsync(Camera, ct).ConfigureAwait(false);
+                // HTTP /image.jpg first (cheap); cameras without one get a
+                // single JPEG off a briefly-opened RTSP stream. Never a live
+                // session — the whole point of stills mode is no decoder.
+                var bytes = await _frameSource.GrabAsync(Camera, ct).ConfigureAwait(false)
+                            ?? await _snapshots.GrabFrameAsync(Camera, ct).ConfigureAwait(false);
                 var bmp = bytes is { Length: > 0 } ? DecodeJpeg(bytes) : null;
                 if (bmp is not null)
                 {

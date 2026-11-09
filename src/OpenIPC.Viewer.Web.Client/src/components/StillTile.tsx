@@ -26,6 +26,7 @@ export const StillTile = memo(function StillTile({ camera, intervalSeconds }: {
   useEffect(() => {
     let cancelled = false
     let timer: number | undefined
+    let controller: AbortController | null = null
     // The frame on screen (`shown`) is never revoked while it's displayed: the
     // one released at the top of a tick is the generation before it, which the
     // browser stopped referencing an interval ago.
@@ -37,10 +38,15 @@ export const StillTile = memo(function StillTile({ camera, intervalSeconds }: {
         URL.revokeObjectURL(stale)
         stale = null
       }
+      controller = new AbortController()
       try {
         const res = await fetch(api.snapshotUrl(camera.id), {
           credentials: 'same-origin',
           cache: 'no-store',
+          // A slow camera must not deliver a late frame into an unmounted (or
+          // re-intervalled) tile, which looked like an extra unrequested
+          // refresh on top of the chosen interval.
+          signal: controller.signal,
         })
         if (!res.ok) throw new Error(String(res.status))
         const blob = await res.blob()
@@ -62,6 +68,7 @@ export const StillTile = memo(function StillTile({ camera, intervalSeconds }: {
     void tick()
     return () => {
       cancelled = true
+      controller?.abort()
       window.clearTimeout(timer)
       if (shown) URL.revokeObjectURL(shown)
       if (stale) URL.revokeObjectURL(stale)

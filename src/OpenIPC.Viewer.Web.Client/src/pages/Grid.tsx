@@ -5,6 +5,7 @@ import { Icon } from '../components/Icon'
 import { useAuth } from '../auth'
 import { EmptyCell, LiveTile } from '../components/LiveTile'
 import { StillTile } from '../components/StillTile'
+import { destroyIdle } from '../live/liveSession'
 import { ConfirmModal, TextPromptModal } from '../components/Modals'
 
 // Grid size is the side N of an NxN grid (matches the backend/desktop model);
@@ -85,7 +86,14 @@ export function Grid() {
     }
   }, [])
 
-  useEffect(() => savePref('stills', stills), [stills])
+  useEffect(() => {
+    savePref('stills', stills)
+    // LiveTile unmount only hands its pooled session back; the pool would keep
+    // the <video> (and the server's ffmpeg) streaming for another 30 s. Stills
+    // mode has no live viewer, so release them now. Defer one tick so the
+    // child tiles' cleanup (release) has run and the sessions are idle.
+    if (stills) window.setTimeout(destroyIdle, 0)
+  }, [stills])
   useEffect(() => savePref('stillInterval', stillInterval), [stillInterval])
   useEffect(() => savePref('rotate', rotate), [rotate])
   useEffect(() => savePref('rotateInterval', rotateInterval), [rotateInterval])

@@ -91,6 +91,24 @@ public sealed class SnapshotService : ISnapshotService
     public Task<Snapshot> SaveFrameAsync(CameraId cameraId, byte[] jpeg, DateTime takenAtUtc, CancellationToken ct) =>
         SaveAsync(cameraId, jpeg, SnapshotSource.Recording, SnapshotKind.Manual, takenAtUtc, ct);
 
+    // Stills-mode fallback for cameras with no HTTP snapshot endpoint: briefly
+    // open the mainstream, take one JPEG, release. Unlike CaptureAsync this
+    // never writes to disk or adds a row — the grid calls it every few seconds.
+    public async Task<byte[]?> GrabFrameAsync(Camera camera, CancellationToken ct)
+    {
+        try
+        {
+            var (jpeg, _) = await GrabAsync(camera, null, null, ct).ConfigureAwait(false);
+            return jpeg.Length > 0 ? jpeg : null;
+        }
+        catch (Exception)
+        {
+            // GrabAsync throws when every source failed — a transient miss must
+            // leave the previous still on screen rather than blanking the tile.
+            return null;
+        }
+    }
+
     private async Task<(byte[] Jpeg, SnapshotSource Source)> GrabAsync(
         Camera camera, IVideoSession? liveSession, StreamQuality? liveQuality, CancellationToken ct)
     {

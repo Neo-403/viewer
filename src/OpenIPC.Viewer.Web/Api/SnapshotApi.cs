@@ -21,7 +21,9 @@ namespace OpenIPC.Viewer.Web.Api;
 // Two sources, in the desktop's order of preference: Majestic's own
 // /image.jpg (the camera encodes it, so it costs us nothing and comes at
 // sensor resolution), falling back to one short ffmpeg pull off the RTSP
-// stream for cameras that aren't Majestic or have the HTTP server off.
+// stream when the HTTP endpoint doesn't answer. The IsMajestic flag is only
+// written by an explicit probe, so it is NOT a gate — a hand-added OpenIPC
+// camera would otherwise pay for a full RTSP session on every still.
 //
 // Nothing is stored: this hands the browser the bytes, which is what "take a
 // snapshot" means from a web client. The shared snapshot library the desktop
@@ -30,6 +32,10 @@ namespace OpenIPC.Viewer.Web.Api;
 public static class SnapshotApi
 {
     private static readonly TimeSpan MajesticTimeout = TimeSpan.FromSeconds(6);
+    // Shorter probe for cameras the discovery probe never flagged. A genuine
+    // OpenIPC answers /image.jpg in well under a second; a real ONVIF camera
+    // shouldn't hold up every still for the full 6 s before the RTSP fallback.
+    private static readonly TimeSpan MajesticProbeTimeout = TimeSpan.FromSeconds(2);
     private static readonly TimeSpan FfmpegTimeout = TimeSpan.FromSeconds(15);
 
     public static void MapSnapshotEndpoints(this WebApplication app)
@@ -88,15 +94,18 @@ public static class SnapshotApi
         HttpContext ctx, Camera camera, CameraCredentials? credentials, ILogger logger, CancellationToken ct)
     {
         var majestic = ctx.RequestServices.GetService<IMajesticClient>();
-        if (majestic is null || !camera.IsMajestic)
+        if (majestic is null)
             return null;
 
         try
         {
             using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
-            timeout.CancelAfter(MajesticTimeout);
+            timeout.CancelAfter(camera.IsMajestic ? MajesticTimeout : MajesticProbeTimeout);
             var endpoint = new MajesticEndpoint(camera.Host, camera.HttpPort, credentials);
-            return await majestic.SnapshotJpegAsync(endpoint, new MajesticSnapshotOptions(), timeout.Token);
+            var bytes = await majestic.SnapshotJpegAsync(endpoint, new MajesticSnapshotOptions(), timeout.Token);
+            // A non-Majestic web server can answer 200 with its login page.
+            // Only a real JPEG (SOI marker) may be served as image/jpeg.
+            return IsJpeg(bytes) ? bytes : null;
         }
         catch (Exception ex)
         {
@@ -104,6 +113,9 @@ public static class SnapshotApi
             return null;
         }
     }
+
+    private static bool IsJpeg(byte[]? bytes) =>
+        bytes is { Length: > 2 } && bytes[0] == 0xFF && bytes[1] == 0xD8;
 
     // One frame off the mainstream. Writes to stdout so nothing lands on disk,
     // and dies with the request if the camera stops answering mid-pull.

@@ -294,6 +294,14 @@ function destroy(session: LiveSession) {
   session.close()
 }
 
+// Stills mode leaves no live viewer at all. LiveTile unmount only *releases*
+// its session into the 30 s retention pool, where the <video> and the
+// server-side ffmpeg keep streaming behind the still images. Drop those idle
+// sessions as soon as the grid switches so nothing real-time remains running.
+export function destroyIdle() {
+  for (const s of [...idleOrder]) destroy(s)
+}
+
 // avcC → H.264 codec string; hvcC → 'hevc' sentinel (trigger transcode).
 function findCodec(chunks: Uint8Array<ArrayBuffer>[]): string | null {
   let t = 0

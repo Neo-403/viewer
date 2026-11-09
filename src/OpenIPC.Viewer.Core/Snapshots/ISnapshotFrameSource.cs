@@ -14,9 +14,13 @@ namespace OpenIPC.Viewer.Core.Snapshots;
 public interface ISnapshotFrameSource
 {
     /// <summary>
-    /// True when the camera exposes a cheap HTTP still endpoint (OpenIPC/Majestic
-    /// <c>/image.jpg</c>). Cameras without one keep their live RTSP view in grid
-    /// stills mode instead of blanking to an empty tile.
+    /// Whether a still can be attempted for this camera. Implementations should
+    /// return true for every camera and let <see cref="GrabAsync"/> report a
+    /// miss: gating on a discovery flag (e.g. IsMajestic) makes the grid
+    /// silently fall back to a live RTSP session for hand-added cameras, which
+    /// defeats the whole stills mode and its refresh interval. When no source
+    /// answers, callers fall back to a one-frame RTSP grab — never to a live
+    /// stream.
     /// </summary>
     bool Supports(Camera camera);
 

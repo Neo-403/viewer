@@ -53,15 +53,31 @@ public sealed partial class RtspVideoView : UserControl
                  ?? throw new InvalidOperationException("PART_Image missing");
     }
 
+    private bool _attached;
+
     static RtspVideoView()
     {
-        SessionProperty.Changed.AddClassHandler<RtspVideoView>((view, _) => view.OnSessionChanged());
+        SessionProperty.Changed.AddClassHandler<RtspVideoView>((view, _) => view.Rebind());
+        IsVisibleProperty.Changed.AddClassHandler<RtspVideoView>((view, _) => view.Rebind());
     }
 
-    private void OnSessionChanged()
+    // Subscribe only while the view is actually visible, attached and has a
+    // session. IsVisible=false does NOT detach a control from the visual tree,
+    // so the old code kept decoding every frame (and copying it into a bitmap)
+    // behind the stills-mode Image — burning CPU and leaving a live frame that
+    // showed through whenever a still grab failed.
+    private void Rebind()
     {
         _frameSub?.Dispose();
-        _frameSub = Session?.Frames.Subscribe(OnFrame);
+        _frameSub = null;
+
+        if (!_attached || !IsVisible || Session is null)
+        {
+            _image.Source = null;
+            return;
+        }
+
+        _frameSub = Session.Frames.Subscribe(OnFrame);
     }
 
     // OnFrame fires on the decoder thread. We marshal to UI synchronously so the
@@ -71,6 +87,8 @@ public sealed partial class RtspVideoView : UserControl
     {
         Dispatcher.UIThread.Invoke(() =>
         {
+            if (_frameSub is null || !IsVisible) return;
+
             EnsureBitmap(frame.Width, frame.Height);
             if (_bitmap is null)
                 return;
@@ -86,23 +104,33 @@ public sealed partial class RtspVideoView : UserControl
 
     private void EnsureBitmap(int width, int height)
     {
-        if (_bitmap is not null && _bitmap.PixelSize.Width == width && _bitmap.PixelSize.Height == height)
-            return;
+        if (_bitmap is null || _bitmap.PixelSize.Width != width || _bitmap.PixelSize.Height != height)
+        {
+            _bitmap = new WriteableBitmap(
+                new PixelSize(width, height),
+                new Vector(96, 96),
+                PixelFormat.Bgra8888,
+                AlphaFormat.Premul);
+            FrameWidth = width;
+            FrameAspect = height > 0 ? (double)width / height : 0;
+        }
 
-        _bitmap = new WriteableBitmap(
-            new PixelSize(width, height),
-            new Vector(96, 96),
-            PixelFormat.Bgra8888,
-            AlphaFormat.Premul);
+        // Always rebind: Rebind() clears Source when hidden / session-less, and
+        // the bitmap object itself is reused for unchanged frame dimensions.
         _image.Source = _bitmap;
-        FrameWidth = width;
-        FrameAspect = height > 0 ? (double)width / height : 0;
+    }
+
+    protected override void OnAttachedToVisualTree(Avalonia.VisualTreeAttachmentEventArgs e)
+    {
+        _attached = true;
+        Rebind();
+        base.OnAttachedToVisualTree(e);
     }
 
     protected override void OnDetachedFromVisualTree(Avalonia.VisualTreeAttachmentEventArgs e)
     {
-        _frameSub?.Dispose();
-        _frameSub = null;
+        _attached = false;
+        Rebind();
         base.OnDetachedFromVisualTree(e);
     }
 }

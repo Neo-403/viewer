@@ -27,6 +27,15 @@ public interface ISnapshotService
         CancellationToken ct);
 
     /// <summary>
+    /// Grabs one JPEG frame without saving, thumbnailing or DB-indexing it.
+    /// Powers the grid's stills loop, which refreshes every N seconds and must
+    /// not fill the snapshot library. Uses the same HD-source priority as
+    /// <see cref="CaptureAsync"/>. Returns null when no source answered, so the
+    /// caller can keep the previously displayed frame.
+    /// </summary>
+    Task<byte[]?> GrabFrameAsync(Camera camera, CancellationToken ct);
+
+    /// <summary>
     /// Renders <paramref name="edit"/> over <paramref name="source"/> and saves
     /// the result as a new <c>*_edited.jpg</c> copy (the original is untouched),
     /// generating a thumbnail and a DB row. Returns the new snapshot.
