@@ -7,7 +7,7 @@ namespace OpenIPC.Viewer.App.Converters;
 
 // Maps raw language codes (system/en/ru) to localized display names via
 // Localizer.Instance. Used by the Settings → Appearance language picker so
-// the dropdown shows "System / English / Русский" instead of "system/en/ru".
+// the dropdown shows "System / English / 简体中文_ZWZW" instead of "system/en/ru".
 //
 // Re-evaluation after a language switch: Localizer raises PropertyChanged
 // on "Item[]" — but converters don't subscribe. ComboBox items re-render

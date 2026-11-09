@@ -79,7 +79,7 @@ Built with .NET 9 / 10 and Avalonia 12.
 - **Desktop niceties** — tray icon with quick actions, optional
   close-to-tray, choice of start page (Library or Live) and startup layout,
   light/dark themes with accent colors.
-- **Camera groups**, English / Russian UI (runtime switch), responsive layout
+- **Camera groups**, English / Chinese UI (runtime switch), responsive layout
   (sidebar on desktop, bottom tab strip and bottom sheets on phones).
 - **Web console (self-host)** — run the same binary with `--server-only` for a
   browser UI to your cameras over the LAN: live grid with saved layouts, PTZ,

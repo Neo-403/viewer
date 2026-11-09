@@ -30,7 +30,8 @@ review cycles short.
 
 - Code, identifiers, log messages, commit messages, docs: English.
   (`docs/web-server.ru.md` is a translation of an English original; UI strings
-  live in `Localizer.cs` in both languages.)
+  live in `Localizer.cs` and `Web.Client/src/strings.ts`. The "ru" language
+  slot now carries Simplified Chinese — the code is kept for compatibility.)
 - One blank line between members; sealed `partial` classes when XAML
   code-behind or `CommunityToolkit.Mvvm` source-gen is involved.
 - Comments only where the *why* is non-obvious; well-named identifiers

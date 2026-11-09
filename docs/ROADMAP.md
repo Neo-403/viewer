@@ -51,7 +51,7 @@ Everything left before the betas stop being betas is packaging and signing:
 - [x] QR-code camera add (decode a saved QR image → pre-filled editor;
       in-camera scanning on mobile is still open)
 - [x] Snapshot share sheet
-- [x] Localization (English / Russian, switched at runtime)
+- [x] Localization (English / Chinese, switched at runtime)
 
 > **Validation caveat.** Linux / macOS / Android / iOS code paths build and
 > link in CI but are not yet end-to-end tested on real devices for every

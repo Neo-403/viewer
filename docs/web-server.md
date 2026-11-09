@@ -24,7 +24,7 @@ LAN. No cloud, no extra services — one admin password and a port.
 * **H.264 over WebSocket** (fMP4 + MSE); H.265 is transcoded on the fly. One
   ffmpeg session is shared across all viewers of a camera.
 * Works from any browser on the network — phone, tablet, another PC.
-* English / Russian, dark Console skin matching the desktop app.
+* English / Chinese, dark Console skin matching the desktop app.
 
 It reads and writes the **same database as the desktop app**, so cameras you add
 in one show up in the other.

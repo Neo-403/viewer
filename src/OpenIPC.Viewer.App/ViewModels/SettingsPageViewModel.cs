@@ -212,7 +212,7 @@ public sealed partial class SettingsPageViewModel : ViewModelBase, IBackNavigabl
         typeof(SettingsPageViewModel).Assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion?.Split('+')[0]
         ?? typeof(SettingsPageViewModel).Assembly.GetName().Version?.ToString()
         ?? "0.1.0";
-    public string RepositoryUrl => "https://github.com/OpenIPC/viewer";
+    public string RepositoryUrl => "https://github.com/Neo-403/viewer";
 
     public SettingsPageViewModel(
         UserSettingsService settings,

@@ -24,8 +24,8 @@
     Typography (design-system §3.3)
     base font: 14px, line-height 1.5; mono used point-wise.
   -->
-  <FontFamily x:Key="FontSans">resm:OpenIPC.Viewer.App.Assets.Fonts.Inter#Inter, Segoe UI, SF Pro Text, Roboto, sans-serif</FontFamily>
-  <FontFamily x:Key="FontMono">Cascadia Code, Consolas, Menlo, monospace</FontFamily>
+  <FontFamily x:Key="FontSans">resm:OpenIPC.Viewer.App.Assets.Fonts.Inter#Inter, Segoe UI, Microsoft YaHei, PingFang SC, Noto Sans CJK SC, SF Pro Text, Roboto, sans-serif</FontFamily>
+  <FontFamily x:Key="FontMono">Cascadia Code, Consolas, Microsoft YaHei, PingFang SC, Noto Sans CJK SC, Menlo, monospace</FontFamily>
 
   <x:Double x:Key="FontSizeSm">12</x:Double>
   <x:Double x:Key="FontSizeBase">14</x:Double>

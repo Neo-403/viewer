@@ -5,7 +5,11 @@
   clip-exporter shell out to. Everything is git-ignored — every dev runs this once.
 
 .NOTES
-  Source: BtbN/FFmpeg-Builds GitHub releases (https://github.com/BtbN/FFmpeg-Builds).
+  Source: FFmpeg-Builds/FFmpeg-Builds GitHub releases (the former BtbN repo was
+          renamed; github.com/BtbN/... now 301-redirects here). The download
+          tries three URLs for the same asset — renamed repo, legacy BtbN path,
+          and the GitHub API asset endpoint — because the browser-facing
+          /releases/download/ path intermittently answers 504 on hosted runners.
   Version pin: n7.1 (matches FFmpeg.AutoGen 7.1.x bindings), taken from a dated
   release rather than the rolling `latest` tag - `latest` only keeps the branches
   BtbN currently builds, and n7.1 was dropped from it in August 2026 (master /
@@ -24,6 +28,9 @@ param(
     # A different release/asset needs its own hash; pass an empty string to skip
     # the check rather than have every override fail.
     [string]$ExpectedSha256 = "0f376f96fb38554ccefb1b2ae9c7c6a7b351f0e60a372b38262c320e8392c5d0",
+    # Numeric GitHub asset id for the API fallback source. Set to an empty
+    # string when overriding the release/asset above.
+    [string]$AssetApiId     = "496767157",
     [switch]$Force
 )
 
@@ -35,7 +42,17 @@ $cacheDir   = Join-Path $repoRoot ".cache/ffmpeg"
 $zipPath    = Join-Path $cacheDir $AssetName
 $extractDir = Join-Path $cacheDir ($AssetName -replace "\.zip$","")
 
-$downloadUrl = "https://github.com/BtbN/FFmpeg-Builds/releases/download/$FfmpegRelease/$AssetName"
+# All three URLs serve identical bytes; the checksum below is the final arbiter.
+$downloadUrls = @()
+if (-not [string]::IsNullOrWhiteSpace($AssetApiId)) {
+    # The API endpoint is tried first: with GH_TOKEN it is authenticated and
+    # avoids the /releases/download/ CDN path that has been answering 504.
+    $downloadUrls += "https://api.github.com/repos/FFmpeg-Builds/FFmpeg-Builds/releases/assets/$AssetApiId"
+}
+$downloadUrls += @(
+    "https://github.com/FFmpeg-Builds/FFmpeg-Builds/releases/download/$FfmpegRelease/$AssetName",
+    "https://github.com/BtbN/FFmpeg-Builds/releases/download/$FfmpegRelease/$AssetName"
+)
 
 # Required runtime DLLs only — header/license files don't ship.
 $requiredDlls = @(
@@ -52,8 +69,31 @@ New-Item -ItemType Directory -Force -Path $nativeDir | Out-Null
 New-Item -ItemType Directory -Force -Path $cacheDir  | Out-Null
 
 function Get-FfmpegArchive {
-    Write-Host "[fetch-ffmpeg] downloading $downloadUrl"
-    Invoke-WebRequest -Uri $downloadUrl -OutFile $zipPath -UseBasicParsing
+    $commonArgs = @(
+        "--silent", "--show-error", "--location", "--fail",
+        "--retry", "2", "--retry-delay", "3", "--retry-all-errors",
+        "--connect-timeout", "30", "--max-time", "300"
+    )
+    foreach ($url in $downloadUrls) {
+        Write-Host "[fetch-ffmpeg] downloading $url"
+        $curlArgs = $commonArgs + @("--output", "$zipPath")
+        if ($url -like "https://api.github.com/*") {
+            $curlArgs += @("--header", "Accept: application/octet-stream")
+            # Hosted runners expose GITHUB_TOKEN as GH_TOKEN; an authenticated
+            # API download takes a different route than the anonymous URL.
+            if ($env:GH_TOKEN) {
+                $curlArgs += @("--header", "Authorization: Bearer $env:GH_TOKEN")
+            }
+        }
+        $curlArgs += $url
+        Remove-Item -LiteralPath $zipPath -Force -ErrorAction SilentlyContinue
+        & curl.exe @curlArgs
+        if ($LASTEXITCODE -eq 0 -and (Test-Path -LiteralPath $zipPath)) {
+            return
+        }
+        Write-Warning "[fetch-ffmpeg] download failed (exit $LASTEXITCODE): $url"
+    }
+    throw "[fetch-ffmpeg] all download sources failed for $AssetName"
 }
 
 if ((Test-Path $zipPath) -and -not $Force) {

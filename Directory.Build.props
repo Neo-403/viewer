@@ -24,7 +24,7 @@
        github:<owner>/<repo>, an https:// URL of a latest.json manifest, or none to turn
        update checks off (store builds such as F-Droid update through the store). -->
   <PropertyGroup>
-    <UpdateFeed Condition="'$(UpdateFeed)' == ''">github:OpenIPC/viewer</UpdateFeed>
+    <UpdateFeed Condition="'$(UpdateFeed)' == ''">github:Neo-403/viewer</UpdateFeed>
   </PropertyGroup>
   <ItemGroup>
     <AssemblyMetadata Include="OpenIpc.UpdateFeed" Value="$(UpdateFeed)" />

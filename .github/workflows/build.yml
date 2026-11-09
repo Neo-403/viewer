@@ -19,6 +19,15 @@ on:
       - 'LICENSE'
       - '.gitignore'
   workflow_dispatch:
+    inputs:
+      publish_release:
+        description: 'Also publish the artifacts to a GitHub Release'
+        type: boolean
+        default: false
+      release_tag:
+        description: 'Release tag (empty = build-<run number>; use vX.Y.Z for in-app update checks)'
+        type: string
+        default: ''
 
 jobs:
   build:
@@ -59,6 +68,15 @@ jobs:
       # libsecret for the keyring; the bundled FFmpeg 7 .so come from the fetch
       # step below, not apt — the distro ffmpeg (6.1 on 24.04 runners) is the
       # wrong ABI for FFmpeg.AutoGen 7.1.1 and must NOT end up in the archive.
+      - name: Cache bundled FFmpeg archives
+        if: runner.os != 'macOS'
+        uses: actions/cache@v4
+        with:
+          path: |
+            .cache/ffmpeg/*.zip
+            .cache/ffmpeg/*.tar.xz
+          key: ffmpeg-desktop-${{ runner.os }}-autobuild-2026-07-31-14-10-n7.1.5
+
       - name: Install libsecret (Linux)
         if: runner.os == 'Linux'
         run: |
@@ -67,6 +85,8 @@ jobs:
 
       - name: Fetch bundled ffmpeg (Linux)
         if: runner.os == 'Linux'
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: bash ./tools/fetch-ffmpeg-linux.sh
 
       - name: Install ffmpeg (macOS)
@@ -76,6 +96,8 @@ jobs:
       - name: Fetch bundled ffmpeg (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: ./tools/fetch-ffmpeg.ps1
 
       # Mobile heads (Android/iOS) need workloads not installed on these
@@ -320,10 +342,20 @@ jobs:
     # iOS is disabled for now (see the ios job above), so the release only
     # depends on the desktop matrix + android. Re-add `ios` here once that job
     # is re-enabled.
-    if: always() && startsWith(github.ref, 'refs/tags/v') && needs.build.result == 'success' && needs.android.result == 'success'
+    # Tag pushes publish as before. A manual run publishes only when its
+    # `publish_release` checkbox is ticked; with no tag of its own it needs an
+    # explicit tag_name (build-<run number>, or the supplied release_tag).
+    if: >-
+      always() &&
+      needs.build.result == 'success' &&
+      needs.android.result == 'success' &&
+      (startsWith(github.ref, 'refs/tags/v') ||
+      (github.event_name == 'workflow_dispatch' && inputs.publish_release))
     runs-on: ubuntu-latest
     permissions:
       contents: write
+    env:
+      RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && (inputs.release_tag || format('build-{0}', github.run_number)) || github.ref_name }}
     steps:
       - uses: actions/download-artifact@v4
         with:
@@ -332,6 +364,8 @@ jobs:
 
       - uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ env.RELEASE_TAG }}
+          name: ${{ github.event_name == 'workflow_dispatch' && format('Build {0} (zh-CN)', github.run_number) || github.ref_name }}
           files: artifacts/**/*
-          generate_release_notes: true
-          prerelease: ${{ contains(github.ref_name, '-beta') || contains(github.ref_name, '-rc') || contains(github.ref_name, '-alpha') || contains(github.ref_name, '-preview') }}
+          generate_release_notes: ${{ github.event_name != 'workflow_dispatch' }}
+          prerelease: ${{ contains(env.RELEASE_TAG, '-beta') || contains(env.RELEASE_TAG, '-rc') || contains(env.RELEASE_TAG, '-alpha') || contains(env.RELEASE_TAG, '-preview') }}

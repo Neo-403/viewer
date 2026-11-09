@@ -25,7 +25,7 @@ public sealed record UserSettings(
     // LAN interface (ignore VPN/virtual adapters).
     string PreferredNetworkInterface = "",
     string RecordingsDirOverride = "",
-    // "system" follows CurrentUICulture; "en"/"ru" force a specific locale.
+    // "system" follows CurrentUICulture; "en" is English, "ru" is the Chinese UI slot.
     string Language = "system",
     bool WelcomeShown = false,
     // The animated startup splash (our in-app one, not the OS launch screen).

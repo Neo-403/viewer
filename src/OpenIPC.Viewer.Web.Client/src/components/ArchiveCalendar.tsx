@@ -45,7 +45,7 @@ export function ArchiveCalendar({
     return out
   }, [month])
 
-  const monthLabel = month.toLocaleDateString(lang === 'ru' ? 'ru-RU' : 'en-GB', {
+  const monthLabel = month.toLocaleDateString(lang === 'ru' ? 'zh-CN' : 'en-GB', {
     month: 'long',
     year: 'numeric',
   })
@@ -132,6 +132,6 @@ function isToday(date: Date): boolean {
 
 function weekdayLabels(lang: string): string[] {
   return lang === 'ru'
-    ? ['пн', 'вт', 'ср', 'чт', 'пт', 'сб', 'вс']
+    ? ['一', '二', '三', '四', '五', '六', '日']
     : ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
 }

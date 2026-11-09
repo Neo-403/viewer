@@ -214,23 +214,9 @@ public sealed partial class DiscoveryDialogViewModel : ViewModelBase
         IpRangeError = null;
     }
 
-    // "1 address" / "5 addresses"; Russian has three forms (1 / 2–4 / 5+).
-    private static string AddressCount(int n)
-    {
-        var key = "Discovery.Sweep.Many";
-        if (Localizer.Instance.Active == LangCode.Russian)
-        {
-            var mod100 = n % 100;
-            var mod10 = n % 10;
-            if (mod10 == 1 && mod100 != 11) key = "Discovery.Sweep.One";
-            else if (mod10 is >= 2 and <= 4 && mod100 is < 12 or > 14) key = "Discovery.Sweep.Few";
-        }
-        else if (n == 1)
-        {
-            key = "Discovery.Sweep.One";
-        }
-        return string.Format(CultureInfo.CurrentCulture, Localizer.Instance[key], n);
-    }
+    // Chinese has no plural forms: one template covers every count.
+    private static string AddressCount(int n) =>
+        string.Format(CultureInfo.CurrentCulture, Localizer.Instance["Discovery.Sweep.Many"], n);
 
     private void Reject(IpRangeParseError error)
     {

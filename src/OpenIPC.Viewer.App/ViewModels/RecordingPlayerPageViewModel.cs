@@ -121,7 +121,7 @@ public sealed partial class RecordingPlayerPageViewModel : ViewModelBase, IAsync
             var end = TimelineEnd.ToLocalTime();
             var parts = new List<string>
             {
-                start.ToString("d MMMM yyyy", UiCulture),
+                start.ToString(Localizer.Instance.LongDateFormat, UiCulture),
                 $"{start:HH:mm:ss} – {end:HH:mm:ss}",
                 FormatShort(TimelineEnd - TimelineStart),
             };
@@ -504,7 +504,7 @@ public sealed partial class RecordingPlayerPageViewModel : ViewModelBase, IAsync
         var start = r.StartedAt.ToLocalTime();
         var when = start.Date == DateTime.Now.Date
             ? start.ToString("HH:mm:ss", CultureInfo.InvariantCulture)
-            : start.ToString("d MMM, HH:mm:ss", UiCulture);
+            : start.ToString(Localizer.Instance.MonthDayTimeFormat, UiCulture);
         return $"{Localizer.Instance[key]} · {when}";
     }
 
@@ -790,9 +790,7 @@ public sealed partial class RecordingPlayerPageViewModel : ViewModelBase, IAsync
         }
     }
 
-    private static CultureInfo UiCulture => Localizer.Instance.Active == LangCode.Russian
-        ? CultureInfo.GetCultureInfo("ru-RU")
-        : CultureInfo.GetCultureInfo("en-US");
+    private static CultureInfo UiCulture => Localizer.Instance.UiCulture;
 
     private static DateTime Min(DateTime a, DateTime b) => a <= b ? a : b;
     private static DateTime Max(DateTime a, DateTime b) => a >= b ? a : b;

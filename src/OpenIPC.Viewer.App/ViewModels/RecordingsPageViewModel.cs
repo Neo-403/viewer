@@ -400,11 +400,11 @@ public sealed class RecordingDayHeader
 {
     public RecordingDayHeader(DateTime day, int count, long bytes)
     {
-        var culture = Localizer.Instance.Active == LangCode.Russian
-            ? CultureInfo.GetCultureInfo("ru-RU")
-            : CultureInfo.GetCultureInfo("en-US");
+        var culture = Localizer.Instance.UiCulture;
         var today = DateTime.Now.Date;
-        var date = day.ToString(day.Year == today.Year ? "d MMMM" : "d MMMM yyyy", culture);
+        var date = day.ToString(day.Year == today.Year
+            ? Localizer.Instance.ShortDateFormat
+            : Localizer.Instance.LongDateFormat, culture);
         Title = day == today ? $"{Localizer.Instance["Recordings.Today"]}, {date}"
             : day == today.AddDays(-1) ? $"{Localizer.Instance["Recordings.Yesterday"]}, {date}"
             : date;

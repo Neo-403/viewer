@@ -88,7 +88,7 @@ export function System() {
           </a>{' '}
           ·{' '}
           <a onClick={() => setLang('ru')} style={{ cursor: 'pointer' }}>
-            RU
+            中文
           </a>
         </span>
         <button

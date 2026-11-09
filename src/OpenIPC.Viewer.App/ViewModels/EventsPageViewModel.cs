@@ -443,11 +443,11 @@ public sealed class EventDayHeader
 {
     public EventDayHeader(DateTime day, int count)
     {
-        var culture = Localizer.Instance.Active == LangCode.Russian
-            ? CultureInfo.GetCultureInfo("ru-RU")
-            : CultureInfo.GetCultureInfo("en-US");
+        var culture = Localizer.Instance.UiCulture;
         var today = DateTime.Now.Date;
-        var date = day.ToString(day.Year == today.Year ? "d MMMM" : "d MMMM yyyy", culture);
+        var date = day.ToString(day.Year == today.Year
+            ? Localizer.Instance.ShortDateFormat
+            : Localizer.Instance.LongDateFormat, culture);
         Title = day == today ? $"{Localizer.Instance["Recordings.Today"]}, {date}"
             : day == today.AddDays(-1) ? $"{Localizer.Instance["Recordings.Yesterday"]}, {date}"
             : date;
@@ -489,7 +489,7 @@ public sealed class EventEpisodeRow
     public string TimeLabel { get; }
     public string Description { get; }
 
-    // Detection: one icon chip per class ("🚗 машина ×4"); empty for motion,
+    // Detection: one icon chip per class ("🚗 小汽车 ×4"); empty for motion,
     // which shows Description instead.
     public IReadOnlyList<DetectionClassChip> Classes { get; }
     public bool HasClasses => Classes.Count > 0;

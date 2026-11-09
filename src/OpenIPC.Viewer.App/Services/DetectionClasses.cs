@@ -45,7 +45,7 @@ public static class DetectionClasses
     }
 }
 
-// A class with a count, rendered as an icon chip ("🚗 машина 84").
+// A class with a count, rendered as an icon chip ("🚗 小汽车 84").
 public sealed record DetectionClassChip(string Label, int Count, string IconKey)
 {
     public string Name => DetectionClasses.Localize(Label);

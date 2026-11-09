@@ -14,7 +14,9 @@
 # matching n7.1 libs next to the binary makes the linux-x64 release self-
 # contained, exactly like fetch-ffmpeg.ps1 does for win-x64.
 #
-# Source:  BtbN/FFmpeg-Builds GitHub releases (https://github.com/BtbN/FFmpeg-Builds).
+# Source:  FFmpeg-Builds/FFmpeg-Builds (the former BtbN repo was renamed; the
+#          github.com/BtbN/... path now 301-redirects). Three URLs are tried
+#          because /releases/download/ intermittently answers 504 on CI.
 # Pin:     n7.1 (matches FFmpeg.AutoGen 7.1.x bindings), from a dated release
 #          rather than the rolling `latest` tag. `latest` is rebuilt daily and
 #          only keeps the branches BtbN currently builds: n7.1 was dropped from
@@ -42,7 +44,13 @@ cache_dir="$repo_root/.cache/ffmpeg"
 archive_path="$cache_dir/$ASSET_NAME"
 extract_dir="$cache_dir/${ASSET_NAME%.tar.xz}"
 
-download_url="https://github.com/BtbN/FFmpeg-Builds/releases/download/$FFMPEG_RELEASE/$ASSET_NAME"
+download_urls=(
+  # The authenticated API asset endpoint goes first — the browser-facing
+  # /releases/download/ path has been answering 504 on hosted runners.
+  "https://api.github.com/repos/FFmpeg-Builds/FFmpeg-Builds/releases/assets/${ASSET_API_ID:-496767425}"
+  "https://github.com/FFmpeg-Builds/FFmpeg-Builds/releases/download/$FFMPEG_RELEASE/$ASSET_NAME"
+  "https://github.com/BtbN/FFmpeg-Builds/releases/download/$FFMPEG_RELEASE/$ASSET_NAME"
+)
 
 mkdir -p "$native_dir" "$cache_dir"
 
@@ -55,8 +63,22 @@ sha256_of() {
 }
 
 download() {
-  echo "[fetch-ffmpeg-linux] downloading $download_url"
-  curl -fL --retry 3 -o "$archive_path" "$download_url"
+  local common=(-fsSL --retry 5 --retry-delay 5 --retry-all-errors \
+                --connect-timeout 30 --max-time 300)
+  local headers=(-H "Accept: application/octet-stream")
+  if [[ -n "${GH_TOKEN:-}" ]]; then
+    headers+=(-H "Authorization: Bearer $GH_TOKEN")
+  fi
+  for url in "${download_urls[@]}"; do
+    echo "[fetch-ffmpeg-linux] downloading $url"
+    rm -f "$archive_path"
+    if curl "${common[@]}" "${headers[@]}" -o "$archive_path" "$url"; then
+      return 0
+    fi
+    echo "[fetch-ffmpeg-linux] download failed: $url" >&2
+  done
+  echo "[fetch-ffmpeg-linux] all download sources failed for $ASSET_NAME" >&2
+  return 1
 }
 
 if [[ -f "$archive_path" && "$FORCE" != "1" ]]; then

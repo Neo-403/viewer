@@ -19,7 +19,7 @@ Per-platform AppData root paths are in the README's **User data** section.
 ## First-run flow
 
 On first launch the library is empty and a welcome dialog appears — it also
-carries a language picker (English / Russian, switchable later in Settings) —
+carries a language picker (English / Chinese, switchable later in Settings) —
 with four choices:
 
 1. **Scan local network** — aggregated discovery: ONVIF WS-Discovery and mDNS

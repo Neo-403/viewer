@@ -8,7 +8,7 @@
    remote font would leak every page view to a third party.
 
    The FULL variable file, not the `variable-latin` subset — the UI ships
-   Russian, and the subset drops Cyrillic. One weight axis (100–900) covers
+   Chinese; Inter has no CJK glyphs, so the font stack falls back to a local CJK face. One weight axis (100–900) covers
    every weight we use, so it's a single ~350 kB request, cached forever;
    italics are not bundled because the UI has none. Inter is SIL OFL 1.1
    (LICENSE.txt in the package). */
@@ -33,7 +33,7 @@
 body {
   margin:0; background:var(--bg1); color:var(--text-1);
   /* Bundled first, then a locally installed Inter, then the platform stack. */
-  font-family: InterVariable, Inter, "Segoe UI", system-ui, -apple-system, Roboto, sans-serif;
+  font-family: InterVariable, Inter, "Segoe UI", "Microsoft YaHei", "PingFang SC", "Noto Sans CJK SC", system-ui, -apple-system, Roboto, sans-serif;
   font-size:14px; line-height:1.5;
 }
 a { color:var(--accent); text-decoration:none; }

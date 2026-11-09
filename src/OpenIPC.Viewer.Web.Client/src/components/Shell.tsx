@@ -63,7 +63,7 @@ export function Shell() {
             </a>{' '}
             ·{' '}
             <a onClick={() => setLang('ru')} style={{ cursor: 'pointer' }}>
-              RU
+              中文
             </a>
           </span>
           <button type="button" style={{ width: '100%' }} onClick={onLogout}>

@@ -66,8 +66,8 @@ public sealed partial class ArchiveCalendarViewModel : ViewModelBase
 
     public bool HasSelectedDate => SelectedDate is not null;
 
-    // "27 сентября" — the compact calendar's reset chip.
-    public string SelectedDateLabel => SelectedDate is { } d ? d.ToString("d MMMM", UiCulture) : "";
+    // "9月27日" — the compact calendar's reset chip.
+    public string SelectedDateLabel => SelectedDate is { } d ? d.ToString(Localizer.Instance.ShortDateFormat, UiCulture) : "";
 
     public ObservableCollection<CalendarDayCell> Days { get; } = new();
 
@@ -84,7 +84,7 @@ public sealed partial class ArchiveCalendarViewModel : ViewModelBase
     private void ToggleExpanded() => IsExpanded = !IsExpanded;
 
     public string MonthLabel =>
-        UiCulture.TextInfo.ToTitleCase(new DateTime(Year, Month, 1).ToString("MMMM yyyy", UiCulture));
+        UiCulture.TextInfo.ToTitleCase(new DateTime(Year, Month, 1).ToString(Localizer.Instance.MonthYearFormat, UiCulture));
 
     // "Recordings this month: 12" — tells at a glance whether a month has any.
     [ObservableProperty] private string _monthSummary = "";
@@ -101,7 +101,7 @@ public sealed partial class ArchiveCalendarViewModel : ViewModelBase
 
     public string NearestMonthLabel => NearestMonth is { } m
         ? string.Format(CultureInfo.CurrentCulture, Localizer.Instance["Calendar.NearestFormat"],
-            UiCulture.TextInfo.ToTitleCase(m.ToString("MMMM yyyy", UiCulture)))
+            UiCulture.TextInfo.ToTitleCase(m.ToString(Localizer.Instance.MonthYearFormat, UiCulture)))
         : "";
 
     partial void OnNearestMonthChanged(DateTime? value) => OnPropertyChanged(nameof(NearestMonthLabel));
@@ -116,9 +116,7 @@ public sealed partial class ArchiveCalendarViewModel : ViewModelBase
     }
 
     // Follows the app language setting rather than the OS culture.
-    private static CultureInfo UiCulture => Localizer.Instance.Active == LangCode.Russian
-        ? CultureInfo.GetCultureInfo("ru-RU")
-        : CultureInfo.GetCultureInfo("en-US");
+    private static CultureInfo UiCulture => Localizer.Instance.UiCulture;
 
     public async Task SetRecordingFilterAsync(Func<Recording, bool>? filter)
     {
