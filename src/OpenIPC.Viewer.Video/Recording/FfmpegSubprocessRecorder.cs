@@ -9,8 +9,10 @@ using OpenIPC.Viewer.Video.Pipeline;
 namespace OpenIPC.Viewer.Video.Recording;
 
 // Phase 6.2 strategy: shell out to ffmpeg.exe rather than driving FFmpeg.AutoGen.
-// Zero decode CPU (-c copy), trivially killable, naturally rotates segments via
-// -f segment, and a crash in the recorder can't take down the live decoder.
+// Video is stream-copied (no decode CPU); only the audio track is transcoded to
+// AAC so G.711/PCM camera streams fit in MP4. Trivially killable, naturally
+// rotates segments via -f segment, and a crash in the recorder can't take down
+// the live decoder.
 //
 // FFmpeg path resolution (first hit wins):
 //   1. Explicit override (constructor / appsettings "Recording:FfmpegPath")

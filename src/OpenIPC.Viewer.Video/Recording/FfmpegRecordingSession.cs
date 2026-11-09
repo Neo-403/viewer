@@ -80,32 +80,14 @@ internal sealed partial class FfmpegRecordingSession : IRecordingSession
                     string.IsNullOrEmpty(existing) ? binDir : $"{binDir}:{existing}";
             }
         }
-        psi.ArgumentList.Add("-hide_banner");
-        // verbose (not warning): the segment muxer logs "Opening '<path>' for
-        // writing" at AV_LOG_VERBOSE. We parse that line to learn each segment
-        // path and fire Started/SegmentRotated — at warning it's suppressed, so
-        // no DB row is written and the recording never shows in the list.
-        psi.ArgumentList.Add("-loglevel"); psi.ArgumentList.Add("verbose");
-        psi.ArgumentList.Add("-rtsp_transport"); psi.ArgumentList.Add("tcp");
-        // RTSP socket I/O timeout (µs; FFmpeg 5 renamed stimeout → timeout,
-        // and the PATH fallback may still be a 4.x distro build).
-        // Without it a camera that accepts the TCP connect but never answers
-        // DESCRIBE parks ffmpeg in open forever: no segment is ever opened, so
-        // no row reaches the Recordings tab while REC keeps "running" (#91).
-        psi.ArgumentList.Add(FfmpegCliOptions.RtspTimeoutFlag(_ffmpegPath)); psi.ArgumentList.Add(RtspTimeoutMicros);
-        psi.ArgumentList.Add("-i"); psi.ArgumentList.Add(BuildRtspUri(_options.RtspUri, _options.Credentials).ToString());
-        psi.ArgumentList.Add("-c"); psi.ArgumentList.Add("copy");
-        psi.ArgumentList.Add("-f"); psi.ArgumentList.Add("segment");
-        psi.ArgumentList.Add("-segment_time"); psi.ArgumentList.Add(((int)_options.SegmentDuration.TotalSeconds).ToString(System.Globalization.CultureInfo.InvariantCulture));
-        psi.ArgumentList.Add("-reset_timestamps"); psi.ArgumentList.Add("1");
-        psi.ArgumentList.Add("-strftime"); psi.ArgumentList.Add("1");
-        // Fragmented MP4 → kill-survivable segments (phase-16.1). No +faststart:
-        // it relocates the moov in a second pass over a *finished* file, which a
-        // fragmented (empty_moov) stream doesn't have and which defeats the
-        // play-while-recording / crash-survivable guarantee. default_base_moof
-        // matches the in-process libavformat path and improves player compat.
-        psi.ArgumentList.Add("-movflags"); psi.ArgumentList.Add("+frag_keyframe+empty_moov+default_base_moof");
-        psi.ArgumentList.Add(outputPattern);
+        foreach (var arg in BuildArguments(
+                     BuildRtspUri(_options.RtspUri, _options.Credentials),
+                     outputPattern,
+                     _options.SegmentDuration,
+                     FfmpegCliOptions.RtspTimeoutFlag(_ffmpegPath)))
+        {
+            psi.ArgumentList.Add(arg);
+        }
 
         _proc = Process.Start(psi)
             ?? throw new InvalidOperationException("Failed to launch ffmpeg (check PATH)");
@@ -113,6 +95,54 @@ internal sealed partial class FfmpegRecordingSession : IRecordingSession
         _stderrPump = Task.Run(ReadStderrAsync);
         _ = Task.Run(WatchExitAsync);
     }
+
+    // Pure argument builder (no process, no I/O) so the codec choices are
+    // regression-testable. The desktop recorder shells out to ffmpeg.exe; the
+    // bundled binary is 7.x, the PATH fallback may be a 4.x distro build, hence
+    // the caller-resolved RTSP timeout flag.
+    //
+    // Video is a stream copy (no decode). Audio MUST be transcoded: most IP
+    // cameras send G.711 / PCM (pcm_alaw, pcm_mulaw, g726), which the mp4
+    // muxer cannot carry. With plain "-c copy" avformat_write_header fails:
+    //   "Could not find tag for codec pcm_alaw in stream #1, codec not
+    //    currently supported in container" → "Conversion failed!"
+    // ffmpeg then exits immediately without ever opening a segment, so REC
+    // appears to start but nothing is recorded. AAC is FFmpeg's built-in
+    // encoder (always available) and re-encoding an 8 kHz mono G.711 track is
+    // negligible next to the video.
+    internal static IReadOnlyList<string> BuildArguments(
+        Uri rtspUrl, string outputPattern, TimeSpan segmentDuration, string timeoutFlag) =>
+        new[]
+        {
+            "-hide_banner",
+            // verbose (not warning): the segment muxer logs "Opening '<path>'
+            // for writing" at AV_LOG_VERBOSE. We parse that line to learn each
+            // segment path and fire Started/SegmentRotated — at warning it's
+            // suppressed, so no DB row is written and the recording never
+            // shows in the list.
+            "-loglevel", "verbose",
+            "-rtsp_transport", "tcp",
+            // RTSP socket I/O timeout (µs). Without it a camera that accepts
+            // the TCP connect but never answers DESCRIBE parks ffmpeg in open
+            // forever: no segment is ever opened, so no row reaches the
+            // Recordings tab while REC keeps "running" (#91).
+            timeoutFlag, RtspTimeoutMicros,
+            "-i", rtspUrl.ToString(),
+            "-c:v", "copy",
+            "-c:a", "aac",
+            "-b:a", "64k",
+            "-f", "segment",
+            "-segment_time", ((int)segmentDuration.TotalSeconds).ToString(System.Globalization.CultureInfo.InvariantCulture),
+            "-reset_timestamps", "1",
+            "-strftime", "1",
+            // Fragmented MP4 → kill-survivable segments (phase-16.1). No
+            // +faststart: it relocates the moov in a second pass over a
+            // *finished* file, which a fragmented (empty_moov) stream doesn't
+            // have and which defeats play-while-recording / crash-survivability.
+            // default_base_moof matches the in-process libavformat path.
+            "-movflags", "+frag_keyframe+empty_moov+default_base_moof",
+            outputPattern,
+        };
 
     public async Task StopAsync(CancellationToken ct)
     {

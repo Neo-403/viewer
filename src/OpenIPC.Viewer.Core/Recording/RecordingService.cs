@@ -196,6 +196,19 @@ public sealed class RecordingService : IAsyncDisposable
         {
             var prev = await _repo.GetByPathAsync(path, CancellationToken.None).ConfigureAwait(false);
             if (prev is null) return;
+
+            // ffmpeg can create the segment file and then fail while writing
+            // its header (e.g. an audio codec the mp4 muxer rejects). Such a
+            // 0-byte stub must not stay in the Recordings list: opening it
+            // later fails with "moov atom not found". Drop both the row and
+            // the stub so a failed REC leaves nothing behind.
+            if ((!size.HasValue || size.Value == 0) && File.Exists(path) && new FileInfo(path).Length == 0)
+            {
+                try { File.Delete(path); } catch { /* best effort — may be locked */ }
+                await _repo.RemoveAsync(prev.Id, CancellationToken.None).ConfigureAwait(false);
+                return;
+            }
+
             var finalSize = size ?? (File.Exists(path) ? new FileInfo(path).Length : prev.SizeBytes);
             await _repo.UpdateAsync(
                 prev with { EndedAt = endedAt, SizeBytes = finalSize },

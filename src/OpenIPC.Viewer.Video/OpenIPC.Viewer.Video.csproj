@@ -17,6 +17,15 @@
     <ProjectReference Include="..\OpenIPC.Viewer.Core\OpenIPC.Viewer.Core.csproj" />
   </ItemGroup>
 
+  <!-- The recorder/exporter sessions are internal; tests assert the exact
+       ffmpeg CLI they build (codec flags, segment + movflags) without starting
+       a process. -->
+  <ItemGroup>
+    <AssemblyAttribute Include="System.Runtime.CompilerServices.InternalsVisibleTo">
+      <_Parameter1>OpenIPC.Viewer.Video.Tests</_Parameter1>
+    </AssemblyAttribute>
+  </ItemGroup>
+
   <!--
     FFmpeg shared-build natives aren't on NuGet for our pinned version. Each
     contributor runs tools/fetch-ffmpeg.ps1 (or the equivalent for their OS)

@@ -13,10 +13,11 @@ using OpenIPC.Viewer.Video.Pipeline;
 
 namespace OpenIPC.Viewer.Video.Recording;
 
-// In-process recording via FFmpeg.AutoGen libavformat. Mirrors the
-// FfmpegSubprocessRecorder semantics ("-c copy" + fragmented mp4) but
-// without spawning ffmpeg.exe — needed on Android where APK sandboxes
-// can't shell out.
+// In-process recording via FFmpeg.AutoGen libavformat. Mirrors the desktop
+// recorder's fragmented-mp4 output but without spawning ffmpeg.exe — needed
+// on Android where APK sandboxes can't shell out. There is no encoder in this
+// path: both tracks are stream-copied, so unlike FfmpegSubprocessRecorder it
+// cannot transcode a camera's G.711/PCM audio to AAC for mp4.
 //
 // 9c limitation: single file per session. Segment rotation lands in a
 // follow-up (would need a keyframe-aligned close+reopen at segment_time).
