@@ -39,8 +39,11 @@ public sealed partial class CameraTileViewModel : ViewModelBase, IAsyncDisposabl
     // "Stills" mode: instead of a live RTSP session this tile shows a periodic
     // HTTP snapshot (StillFrame), refreshed every _stillsIntervalSeconds. Set at
     // construction from the grid setting; the tile is rebuilt when it changes.
+    // _stillsPhaseMs offsets this tile's start inside one interval when the
+    // grid's "stagger" option is on (see StillsSchedule).
     private readonly bool _stillsMode;
     private readonly int _stillsIntervalSeconds;
+    private readonly double _stillsPhaseMs;
     private CancellationTokenSource? _stillsCts;
 
     [ObservableProperty] private Bitmap? _stillFrame;
@@ -54,6 +57,7 @@ public sealed partial class CameraTileViewModel : ViewModelBase, IAsyncDisposabl
     // RunStillsAsync, which is still a still, never a live stream.
     public bool StillsMode => _stillsMode;
     public int StillsIntervalSeconds => _stillsIntervalSeconds;
+    public double StillsPhaseMs => _stillsPhaseMs;
 
     // On a stream fault we TCP-probe the camera so the status policy can tell a
     // wedged-but-alive camera (Attention) from a truly unreachable one (Offline).
@@ -255,6 +259,7 @@ public sealed partial class CameraTileViewModel : ViewModelBase, IAsyncDisposabl
         ISnapshotFrameSource frameSource,
         bool stillsMode,
         int stillsIntervalSeconds,
+        double stillsPhaseMs,
         ILogger<CameraTileViewModel> logger)
     {
         Camera = camera;
@@ -270,6 +275,7 @@ public sealed partial class CameraTileViewModel : ViewModelBase, IAsyncDisposabl
         _frameSource = frameSource;
         _stillsMode = stillsMode;
         _stillsIntervalSeconds = stillsIntervalSeconds;
+        _stillsPhaseMs = stillsPhaseMs;
         _logger = logger;
 
         _coordinator.Invalidated += OnCoordinatorInvalidated;
@@ -535,7 +541,25 @@ public sealed partial class CameraTileViewModel : ViewModelBase, IAsyncDisposabl
 
     private async Task RunStillsAsync(CancellationToken ct)
     {
-        var interval = TimeSpan.FromSeconds(Math.Max(1, _stillsIntervalSeconds));
+        var interval = TimeSpan.FromSeconds(StillsSchedule.ClampInterval(_stillsIntervalSeconds));
+
+        // Staggering shifts only the FIRST grab. From then on this tile keeps
+        // its own cadence, so a slow camera never delays another tile and a
+        // round can never grow past the chosen interval (the "wait for the
+        // previous one to finish" problem at 2 s intervals).
+        var phase = TimeSpan.FromMilliseconds(Math.Max(0, _stillsPhaseMs));
+        if (phase > TimeSpan.Zero)
+        {
+            try { await Task.Delay(phase, ct).ConfigureAwait(false); }
+            catch (OperationCanceledException) { return; }
+        }
+
+        // Fixed origins: tick N is due at t0 + N*interval, measured from when
+        // the tick was SCHEDULED, not from when the previous grab finished.
+        // The old "grab + Delay(interval)" made the real period
+        // "grab duration + interval" and let tiles with different latencies
+        // drift back into the same instant, undoing the stagger.
+        var nextTick = DateTime.UtcNow;
         while (!ct.IsCancellationRequested)
         {
             try
@@ -562,7 +586,14 @@ public sealed partial class CameraTileViewModel : ViewModelBase, IAsyncDisposabl
                 _logger.LogDebug(ex, "Stills grab failed for {Name}", Camera.Name);
             }
 
-            try { await Task.Delay(interval, ct).ConfigureAwait(false); }
+            if (ct.IsCancellationRequested) break;
+            nextTick += interval;
+            var now = DateTime.UtcNow;
+            // A grab that overran its whole slot: restart the cadence from now
+            // with a short breather, instead of piling up negative delays (a
+            // wedged camera would otherwise hammer the network non-stop).
+            if (nextTick <= now) nextTick = now + StillsSchedule.MinGrabGap;
+            try { await Task.Delay(nextTick - now, ct).ConfigureAwait(false); }
             catch (OperationCanceledException) { break; }
         }
     }

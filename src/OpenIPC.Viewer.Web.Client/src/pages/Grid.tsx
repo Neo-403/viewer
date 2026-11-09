@@ -12,10 +12,30 @@ import { ConfirmModal, TextPromptModal } from '../components/Modals'
 // cells = N*N. The UI labels each option by its cell count (1, 4, 9, 16, 25).
 const SIDES = [1, 2, 3, 4, 5]
 
-// Refresh rates for stills mode, same ladder as the desktop grid.
+// Preset refresh rates for stills mode, same ladder as the desktop grid.
+// The interval box is editable, so these are shortcuts, not a hard limit.
 const STILL_INTERVALS = [2, 5, 10, 30, 60]
+const MIN_STILL_INTERVAL = 1
+const MAX_STILL_INTERVAL = 3600
 // How long a kiosk wall holds a page before flipping to the next one.
 const ROTATE_INTERVALS = [10, 30, 60]
+
+function clampStillInterval(n: number): number {
+  if (!Number.isFinite(n)) return 5
+  return Math.min(MAX_STILL_INTERVAL, Math.max(MIN_STILL_INTERVAL, Math.round(n)))
+}
+
+// Phase offset for one camera in a staggered wall: spread N grabs over ONE
+// interval, keeping every camera's own period exactly `intervalSeconds`.
+// Serializing grabs instead ("wait for the previous one to finish") would make
+// a round take sum(grab durations) — at 2 s / 9 cameras that is already over
+// 2 s, so the wall would silently refresh slower than requested. Requests may
+// overlap when a grab lasts longer than its slot, but nothing ever queues.
+// Mirrors StillsSchedule.PhaseMs in the .NET Core project.
+export function stillsPhaseMs(index: number, count: number, intervalSeconds: number, stagger: boolean): number {
+  if (!stagger || count <= 1 || index <= 0) return 0
+  return (intervalSeconds * 1000 * Math.min(index, count - 1)) / count
+}
 
 // Wall preferences (stills, kiosk rotation) are per viewer, not per install:
 // the same layout is watched on a control-room screen and on someone's laptop,
@@ -60,7 +80,13 @@ export function Grid() {
   // Wall modes: periodic stills instead of live streams, and a chrome-free
   // fullscreen wall that can cycle through the layout's pages on its own.
   const [stills, setStills] = useState(() => loadPref('stills', false))
-  const [stillInterval, setStillInterval] = useState(() => loadPref('stillInterval', 5))
+  const [stillInterval, setStillInterval] = useState(() => clampStillInterval(loadPref('stillInterval', 5)))
+  // Editable buffer for the interval box: keystrokes only change this string,
+  // so typing "30" doesn't restart every tile for the intermediate "3".
+  const [stillIntervalText, setStillIntervalText] = useState(() => String(stillInterval))
+  // Off (default) = all stills refresh together. On = phases are spread over
+  // one interval to flatten the bandwidth spike; per-camera period is intact.
+  const [stagger, setStagger] = useState(() => loadPref('stagger', false))
   const [rotate, setRotate] = useState(() => loadPref('rotate', false))
   const [rotateInterval, setRotateInterval] = useState(() => loadPref('rotateInterval', 30))
   const [kiosk, setKiosk] = useState(false)
@@ -95,8 +121,27 @@ export function Grid() {
     if (stills) window.setTimeout(destroyIdle, 0)
   }, [stills])
   useEffect(() => savePref('stillInterval', stillInterval), [stillInterval])
+  useEffect(() => savePref('stagger', stagger), [stagger])
+  // Follow preset picks / clamped commits. `stillInterval` does NOT change on
+  // keystrokes, so this never overwrites what the user is in the middle of.
+  useEffect(() => setStillIntervalText(String(stillInterval)), [stillInterval])
   useEffect(() => savePref('rotate', rotate), [rotate])
   useEffect(() => savePref('rotateInterval', rotateInterval), [rotateInterval])
+
+  // Commit a typed interval on blur / Enter. Accepts any whole number of
+  // seconds (1..3600), clamps out-of-range values, restores the last valid one
+  // for junk. A preset chosen from the datalist applies immediately in onChange.
+  const commitStillInterval = () => {
+    const raw = stillIntervalText.trim()
+    const n = /^\d+$/.test(raw) ? Number(raw) : NaN
+    if (Number.isFinite(n)) {
+      const next = clampStillInterval(n)
+      if (next !== stillInterval) setStillInterval(next)
+      else setStillIntervalText(String(next))
+    } else {
+      setStillIntervalText(String(stillInterval))
+    }
+  }
 
   // Kiosk is a CSS mode first and a fullscreen request second. The Fullscreen
   // API is refused outright in an embedded/iframed page, and a wall shown that
@@ -238,6 +283,18 @@ export function Grid() {
 
   const loading = cameras === null || layouts === null
 
+  // Stagger phase is per *visible camera*: empty cells issue no request and
+  // must not consume a slot in the interval.
+  const pageCells = Array.from({ length: pageSize }, (_, i) => camById.get(tiles[pageStart + i] ?? ''))
+  const stillCount = pageCells.filter(Boolean).length
+  let stillIndex = 0
+  const stillIndexes = pageCells.map((c) => {
+    if (!c) return -1
+    const at = stillIndex
+    stillIndex += 1
+    return at
+  })
+
   return (
     <div className="wrap" style={{ maxWidth: 'none' }}>
       <div className="toolbar" style={{ flexWrap: 'wrap' }}>
@@ -272,17 +329,44 @@ export function Grid() {
               {t('Grid.Stills')}
             </button>
             {stills && (
-              <select
-                value={stillInterval}
-                title={t('Grid.StillsInterval')}
-                onChange={(e) => setStillInterval(Number(e.target.value))}
-              >
-                {STILL_INTERVALS.map((s) => (
-                  <option key={s} value={s}>
-                    {s} {t('Common.Seconds')}
-                  </option>
-                ))}
-              </select>
+              <>
+                <label className="row" title={t('Grid.StillsIntervalHint')}>
+                  <input
+                    type="text"
+                    inputMode="numeric"
+                    list="still-interval-presets"
+                    value={stillIntervalText}
+                    style={{ width: 62 }}
+                    onChange={(e) => {
+                      const raw = e.target.value
+                      setStillIntervalText(raw)
+                      // A preset picked from the datalist applies at once;
+                      // typed values wait for blur / Enter.
+                      const preset = Number(raw)
+                      if (STILL_INTERVALS.includes(preset)) setStillInterval(preset)
+                    }}
+                    onBlur={commitStillInterval}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') {
+                        commitStillInterval()
+                        e.currentTarget.blur()
+                      }
+                    }}
+                  />
+                  <datalist id="still-interval-presets">
+                    {STILL_INTERVALS.map((s) => <option key={s} value={s} />)}
+                  </datalist>
+                  <span className="muted">s</span>
+                </label>
+                <label className="row" title={t('Grid.StillsStaggerHint')}>
+                  <input
+                    type="checkbox"
+                    checked={stagger}
+                    onChange={(e) => setStagger(e.target.checked)}
+                  />
+                  {t('Grid.StillsStagger')}
+                </label>
+              </>
             )}
             <button className="row" title={t('Grid.KioskHint')} onClick={enterKiosk}>
               <Icon name="maximize" size={13} /> {t('Grid.Kiosk')}
@@ -372,11 +456,15 @@ export function Grid() {
           )}
           <div className={`videos n${pageSize}`}>
             {Array.from({ length: pageSize }, (_, i) => {
-              const id = tiles[pageStart + i]
-              const cam = id ? camById.get(id) : undefined
+              const cam = pageCells[i]
               if (!cam) return <EmptyCell key={`empty-${i}`} />
               return stills ? (
-                <StillTile key={cam.id} camera={cam} intervalSeconds={stillInterval} />
+                <StillTile
+                  key={cam.id}
+                  camera={cam}
+                  intervalSeconds={stillInterval}
+                  phaseMs={stillsPhaseMs(stillIndexes[i], stillCount, stillInterval, stagger)}
+                />
               ) : (
                 <LiveTile key={cam.id} camera={cam} />
               )

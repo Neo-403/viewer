@@ -60,6 +60,27 @@ public sealed partial class GridPage : UserControl
         }
     }
 
+    // --- Stills toolbar ---------------------------------------------------
+    // The interval ComboBox is editable. The VM keeps a text buffer and only
+    // commits it on blur / Enter, so typing "30" doesn't rebuild every tile
+    // for the intermediate "3". Picking a preset applies immediately.
+    private void OnStillsIntervalSelectionChanged(object? sender, SelectionChangedEventArgs e)
+    {
+        if (DataContext is not GridPageViewModel vm) return;
+        if (e.AddedItems.Count > 0 && e.AddedItems[0] is int seconds)
+            vm.StillsIntervalSeconds = seconds;
+    }
+
+    private void OnStillsIntervalLostFocus(object? sender, RoutedEventArgs e) =>
+        (DataContext as GridPageViewModel)?.CommitStillsIntervalText();
+
+    private void OnStillsIntervalKeyDown(object? sender, KeyEventArgs e)
+    {
+        if (e.Key != Key.Enter) return;
+        (DataContext as GridPageViewModel)?.CommitStillsIntervalText();
+        e.Handled = true;
+    }
+
     // --- Layout tabs (Phase 19.1) ----------------------------------------
     private void OnTabTapped(object? sender, TappedEventArgs e)
     {

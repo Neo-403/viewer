@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
+using System.Globalization;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
@@ -129,7 +130,10 @@ public sealed partial class GridPageViewModel : ViewModelBase,
         _logger = loggerFactory.CreateLogger<GridPageViewModel>();
 
         _stillsMode = _userSettings.Current.GridStillsMode;
-        _stillsIntervalSeconds = _userSettings.Current.GridStillsIntervalSeconds;
+        _stillsIntervalSeconds = StillsSchedule.ClampInterval(_userSettings.Current.GridStillsIntervalSeconds);
+        _stillsStagger = _userSettings.Current.GridStillsStagger;
+        // The editable interval box starts from the effective (clamped) value.
+        _stillsIntervalText = _stillsIntervalSeconds.ToString(CultureInfo.InvariantCulture);
 
         WeakReferenceMessenger.Default.Register<WindowMinimizedMessage>(this);
         WeakReferenceMessenger.Default.Register<WindowRestoredMessage>(this);
@@ -365,16 +369,56 @@ public sealed partial class GridPageViewModel : ViewModelBase,
 
     [ObservableProperty] private int _stillsIntervalSeconds;
 
+    // Editable buffer for the interval combo. Keystrokes only change this
+    // string; the effective interval is committed on blur / Enter / picking a
+    // preset, so typing "30" doesn't tear down and rebuild every tile twice
+    // (once for "3" and again for "30").
+    [ObservableProperty] private string _stillsIntervalText = "";
+
+    // Off (default) = all tiles start their loop at the same instant.
+    // On = phases are spread evenly over one interval to flatten the
+    // bandwidth spike. Either way each tile refreshes every N seconds.
+    [ObservableProperty] private bool _stillsStagger;
+
+    // Effective, clamped interval used for persistence and tile scheduling.
+    private int EffectiveStillsIntervalSeconds => StillsSchedule.ClampInterval(StillsIntervalSeconds);
+
     public int[] StillsIntervalOptions { get; } = { 2, 5, 10, 30, 60 };
 
     partial void OnStillsModeChanged(bool value) => _ = ApplyStillsChangeAsync();
 
-    partial void OnStillsIntervalSecondsChanged(int value) => _ = ApplyStillsChangeAsync();
+    partial void OnStillsIntervalSecondsChanged(int value)
+    {
+        StillsIntervalText = StillsSchedule.ClampInterval(value).ToString(CultureInfo.InvariantCulture);
+        _ = ApplyStillsChangeAsync();
+    }
 
-    // The two RadioButtons and the interval ComboBox all write through this
-    // path, and every write is fire-and-forget. Serialise them so two rebuilds
-    // can't race over Tiles, and a slower Persist can't write back a stale
-    // snapshot of the settings.
+    partial void OnStillsStaggerChanged(bool value) => _ = ApplyStillsChangeAsync();
+
+    /// <summary>
+    /// Called by the view when the editable interval box loses focus or Enter
+    /// is pressed. Accepts any whole number of seconds (1..3600), clamps
+    /// out-of-range input, and restores the last valid value for junk input.
+    /// </summary>
+    public void CommitStillsIntervalText()
+    {
+        if (StillsSchedule.TryParseInterval(StillsIntervalText, out var seconds))
+        {
+            if (seconds != StillsIntervalSeconds)
+                StillsIntervalSeconds = seconds; // triggers persist + tile rebuild
+            else
+                StillsIntervalText = seconds.ToString(CultureInfo.InvariantCulture); // "007" → "7"
+        }
+        else
+        {
+            StillsIntervalText = EffectiveStillsIntervalSeconds.ToString(CultureInfo.InvariantCulture);
+        }
+    }
+
+    // The two RadioButtons, the interval ComboBox and the stagger CheckBox all
+    // write through this path, and every write is fire-and-forget. Serialise
+    // them so two rebuilds can't race over Tiles, and a slower Persist can't
+    // write back a stale snapshot of the settings.
     private readonly SemaphoreSlim _stillsApplyGate = new(1, 1);
 
     private async Task ApplyStillsChangeAsync()
@@ -399,11 +443,12 @@ public sealed partial class GridPageViewModel : ViewModelBase,
         try
         {
             // Functional update reads Current inside the save gate, so another
-            // page persisting a different field can't clobber these two.
+            // page persisting a different field can't clobber these values.
             await _userSettings.UpdateAsync(s => s with
             {
                 GridStillsMode = StillsMode,
-                GridStillsIntervalSeconds = StillsIntervalSeconds,
+                GridStillsIntervalSeconds = EffectiveStillsIntervalSeconds,
+                GridStillsStagger = StillsStagger,
             }).ConfigureAwait(true);
         }
         catch (Exception ex) { _logger.LogWarning(ex, "Persisting stills settings failed"); }
@@ -477,20 +522,30 @@ public sealed partial class GridPageViewModel : ViewModelBase,
         // was matched by Id and kept, so it kept streaming the old URL until an
         // app restart. RefreshTilesAsync re-runs on every Live-tab entry (the
         // only time an edit can have landed), so the swap happens on next view.
-        foreach (var camera in visible)
+        var stillsInterval = EffectiveStillsIntervalSeconds;
+        for (var i = 0; i < visible.Count; i++)
         {
+            var camera = visible[i];
+            // Stagger phase comes from this tile's position in the page, so a
+            // change to the interval, the visible camera count or the stagger
+            // toggle must rebuild the tile to re-phase its loop. With stagger
+            // off every phase is 0 and the behaviour is exactly as before.
+            var phaseMs = StillsStagger
+                ? StillsSchedule.PhaseMs(i, visible.Count, stillsInterval)
+                : 0;
             var quality = DesiredQuality(camera);
             var existing = Tiles.FirstOrDefault(t => t.Camera.Id == camera.Id);
             if (existing is not null)
             {
                 // Rebuild on a stream-URL change, an analytics-settings change,
-                // or a stills mode/interval change: the tile holds an immutable
-                // Camera snapshot AND captures the stills settings at
-                // construction, so keeping it would ignore the new interval.
+                // or a stills mode/interval/phase change: the tile holds an
+                // immutable Camera snapshot AND captures the stills settings
+                // at construction, so keeping it would ignore the new interval.
                 if (!StreamUriChanged(existing.Camera, camera)
                     && !AnalyticsChanged(existing.Camera, camera)
                     && existing.StillsMode == StillsMode
-                    && existing.StillsIntervalSeconds == StillsIntervalSeconds)
+                    && existing.StillsIntervalSeconds == stillsInterval
+                    && existing.StillsPhaseMs == phaseMs)
                 {
                     // Kept tile — re-evaluate SD/HD against the (possibly new)
                     // layout. No-op when quality is unchanged.
@@ -504,7 +559,7 @@ public sealed partial class GridPageViewModel : ViewModelBase,
                 try { await existing.DisposeAsync().ConfigureAwait(true); }
                 catch (Exception ex) { _logger.LogWarning(ex, "Error releasing stale tile for {Camera}", camera.Name); }
 
-                var rebuilt = new CameraTileViewModel(camera, _coordinator, _directory, _userSettings, _snapshots, _analytics, _analyticsBootstrap, _audio, _reachability, _statusRegistry, _frameSource, StillsMode, StillsIntervalSeconds, _loggerFactory.CreateLogger<CameraTileViewModel>());
+                var rebuilt = new CameraTileViewModel(camera, _coordinator, _directory, _userSettings, _snapshots, _analytics, _analyticsBootstrap, _audio, _reachability, _statusRegistry, _frameSource, StillsMode, stillsInterval, phaseMs, _loggerFactory.CreateLogger<CameraTileViewModel>());
                 rebuilt.SetInitialQuality(quality);
                 Tiles.Insert(idx, rebuilt);
                 try { await rebuilt.ActivateAsync(ct).ConfigureAwait(true); }
@@ -512,7 +567,7 @@ public sealed partial class GridPageViewModel : ViewModelBase,
                 continue;
             }
 
-            var tile = new CameraTileViewModel(camera, _coordinator, _directory, _userSettings, _snapshots, _analytics, _analyticsBootstrap, _audio, _reachability, _statusRegistry, _frameSource, StillsMode, StillsIntervalSeconds, _loggerFactory.CreateLogger<CameraTileViewModel>());
+            var tile = new CameraTileViewModel(camera, _coordinator, _directory, _userSettings, _snapshots, _analytics, _analyticsBootstrap, _audio, _reachability, _statusRegistry, _frameSource, StillsMode, stillsInterval, phaseMs, _loggerFactory.CreateLogger<CameraTileViewModel>());
             tile.SetInitialQuality(quality);
             Tiles.Add(tile);
             try { await tile.ActivateAsync(ct).ConfigureAwait(true); }

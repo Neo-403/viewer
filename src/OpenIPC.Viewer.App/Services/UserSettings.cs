@@ -119,9 +119,15 @@ public sealed record UserSettings(
     bool WindowMaximized = false,
     // Grid "stills" mode: show periodic HTTP snapshots instead of a live RTSP
     // session in every grid tile — far cheaper on CPU/bandwidth for big walls.
-    // Interval is seconds between grabs. A per-camera override lands later.
+    // Interval is seconds between grabs (any 1..3600, not just the UI presets).
+    // A per-camera override lands later.
     bool GridStillsMode = false,
     int GridStillsIntervalSeconds = 10,
+    // Spread the N grabs evenly across one interval instead of firing all N at
+    // the same instant. Off (default) = the original "all together" behaviour.
+    // Each camera keeps exactly the same refresh interval either way; see
+    // StillsSchedule for why we offset phases rather than serialize grabs.
+    bool GridStillsStagger = false,
     // Desktop only: closing the main window hides it to the tray icon instead
     // of quitting (live streams are released while hidden). Off = close quits.
     bool CloseToTray = false,
