@@ -10,6 +10,7 @@ using CommunityToolkit.Mvvm.Input;
 using CommunityToolkit.Mvvm.Messaging;
 using Microsoft.Extensions.Logging;
 using OpenIPC.Viewer.App.Services;
+using OpenIPC.Viewer.Core;
 using OpenIPC.Viewer.Core.Onvif.Discovery;
 using OpenIPC.Viewer.Core.Platform;
 using OpenIPC.Viewer.Core.Ssh;
@@ -213,6 +214,11 @@ public sealed partial class SettingsPageViewModel : ViewModelBase, IBackNavigabl
         ?? typeof(SettingsPageViewModel).Assembly.GetName().Version?.ToString()
         ?? "0.1.0";
     public string RepositoryUrl => "https://github.com/Neo-403/viewer";
+
+    // A time-limited build must not advertise a place to fetch a newer build
+    // from: Directory.Build.props forces UpdateFeed=none for it, and the About
+    // page hides the repository / issue-tracker buttons as well.
+    public bool ExternalLinksAllowed => !BuildExpiration.IsTimeLimited;
 
     public SettingsPageViewModel(
         UserSettingsService settings,
@@ -458,7 +464,11 @@ public sealed partial class SettingsPageViewModel : ViewModelBase, IBackNavigabl
     private void OpenRecordingsDirectory() => OpenInShell(EffectiveRecordingsDirectory);
 
     [RelayCommand]
-    private void OpenRepository() => OpenInShell(RepositoryUrl);
+    private void OpenRepository()
+    {
+        if (!ExternalLinksAllowed) return;
+        OpenInShell(RepositoryUrl);
+    }
 
     // --- Updates (Phase 11.5) ---------------------------------------------
     [ObservableProperty] private bool _checkForUpdates = true;
@@ -468,8 +478,12 @@ public sealed partial class SettingsPageViewModel : ViewModelBase, IBackNavigabl
     [NotifyCanExecuteChangedFor(nameof(CheckForUpdatesNowCommand))]
     private bool _isCheckingForUpdates;
 
-    /// <summary>False in a build made with UpdateFeed=none — the whole block hides.</summary>
-    public bool UpdatesSupported => _updates.IsEnabled;
+    /// <summary>
+    /// False in a build made with UpdateFeed=none — the whole block hides.
+    /// Time-limited builds are stamped with UpdateFeed=none; the extra check
+    /// keeps them update-free even if a feed is ever injected another way.
+    /// </summary>
+    public bool UpdatesSupported => _updates.IsEnabled && ExternalLinksAllowed;
     public string UpdateSourceText => string.Format(CultureInfo.CurrentCulture,
         Localizer.Instance["Settings.About.Updates.Source"], _updates.FeedName);
 
@@ -505,6 +519,7 @@ public sealed partial class SettingsPageViewModel : ViewModelBase, IBackNavigabl
     [RelayCommand]
     private void ReportIssue()
     {
+        if (!ExternalLinksAllowed) return;
         var body =
             $"**{Localizer.Instance["Settings.Report.BodyDescribe"]}**\n\n\n" +
             "---\n" +

@@ -4,6 +4,7 @@ using System.Reflection;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.Logging;
+using OpenIPC.Viewer.Core;
 using OpenIPC.Viewer.Core.Updates;
 
 namespace OpenIPC.Viewer.App.Services;
@@ -55,7 +56,10 @@ public sealed class UpdateService
         Current = current;
     }
 
-    public bool IsEnabled => _feed is not null;
+    // A time-limited build is compiled with UpdateFeed=none; the runtime guard
+    // keeps it update-free even if a feed is ever injected another way, so it
+    // cannot replace itself with an unlimited build from the upstream repo.
+    public bool IsEnabled => _feed is not null && !BuildExpiration.IsTimeLimited;
     public string? FeedName => _feed?.DisplayName;
     public bool SupportsInAppDownload => _downloader.SupportsInAppDownload;
 
@@ -79,7 +83,7 @@ public sealed class UpdateService
     /// <summary>Starts the launch check and the daily re-check. Idempotent.</summary>
     public void StartBackgroundChecks()
     {
-        if (_backgroundStarted || _feed is null) return;
+        if (_backgroundStarted || !IsEnabled) return;
         _backgroundStarted = true;
         _ = BackgroundLoopAsync();
     }
@@ -109,7 +113,8 @@ public sealed class UpdateService
     /// </summary>
     public async Task<UpdateCheckOutcome> CheckAsync(bool manual, CancellationToken ct)
     {
-        if (_feed is null) return new UpdateCheckOutcome(UpdateCheckStatus.Disabled);
+        // Keep the explicit null test so the compiler still narrows _feed below.
+        if (_feed is null || !IsEnabled) return new UpdateCheckOutcome(UpdateCheckStatus.Disabled);
         var generation = ++_generation;
 
         UpdateRelease? latest;

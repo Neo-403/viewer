@@ -992,11 +992,15 @@
             <Run Text="{Binding Version}" />
           </TextBlock>
 
+          <!-- Time-limited builds (ExternalLinksAllowed=false) hide every path
+               that points at the upstream repo, so they can't self-update. -->
           <WrapPanel Orientation="Horizontal" ItemSpacing="8" LineSpacing="8">
             <Button Classes="outlined"
+                    IsVisible="{Binding ExternalLinksAllowed}"
                     Content="{Binding [Settings.About.Repository], Source={x:Static svc:Localizer.Instance}}"
                     Command="{Binding OpenRepositoryCommand}" />
             <Button Classes="outlined"
+                    IsVisible="{Binding ExternalLinksAllowed}"
                     Content="{Binding [Settings.Report.Button], Source={x:Static svc:Localizer.Instance}}"
                     Command="{Binding ReportIssueCommand}" />
             <Button Classes="outlined"

@@ -9,6 +9,7 @@ using Microsoft.Extensions.Logging;
 using OpenIPC.Viewer.App.Services;
 using OpenIPC.Viewer.App.ViewModels;
 using OpenIPC.Viewer.App.Views;
+using OpenIPC.Viewer.Core;
 
 namespace OpenIPC.Viewer.App;
 
@@ -33,6 +34,16 @@ public sealed class App : Application
 
     public override void OnFrameworkInitializationCompleted()
     {
+        // A time-limited build past its expiry shows only the notice. Check this
+        // before any service, window or view is created so no feature can start:
+        // the notice itself becomes the lifetime's root window / main view.
+        if (BuildExpiration.IsExpired())
+        {
+            ShowExpirationNotice();
+            base.OnFrameworkInitializationCompleted();
+            return;
+        }
+
         if (Services is not null)
         {
             // Settings → Appearance: the animated splash is our own feature (not
@@ -46,6 +57,19 @@ public sealed class App : Application
         }
 
         base.OnFrameworkInitializationCompleted();
+    }
+
+    // Desktop and mobile need different roots (Window vs a bare Control), but
+    // both get the same view model and therefore the same exit button.
+    private void ShowExpirationNotice()
+    {
+        var vm = new ExpirationViewModel();
+        if (ApplicationLifetime is IClassicDesktopStyleApplicationLifetime desktop)
+            desktop.MainWindow = new ExpirationWindow { DataContext = vm };
+        else if (ApplicationLifetime is ISingleViewApplicationLifetime singleView)
+            singleView.MainView = new ExpirationView { DataContext = vm };
+        else
+            Environment.Exit(1); // no GUI lifetime: fail closed
     }
 
     // Desktop shows a splash that runs migrations + event ingestion with visible

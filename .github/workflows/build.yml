@@ -21,11 +21,15 @@ on:
   workflow_dispatch:
     inputs:
       publish_release:
-        description: 'Also publish the artifacts to a GitHub Release'
+        description: '将文件发布到GitHub Releases'
         type: boolean
         default: false
       release_tag:
-        description: 'Release tag (empty = build-<run number>; use vX.Y.Z for in-app update checks)'
+        description: '释放标记(空=构建-<运行编号>;使用vX.Y.Z用于应用程序内更新检查)'
+        type: string
+        default: ''
+      expiry:
+        description: '构建过期:N天,或YYYY-MM-DD(该日为最后可用日,UTC);空=永不过期'
         type: string
         default: ''
 
@@ -48,6 +52,19 @@ jobs:
     name: build (${{ matrix.rid }})
     steps:
       - uses: actions/checkout@v4
+
+      # A typo in the manual expiry input would be stamped into the assembly and
+      # the build would fail closed (already expired on first launch). Reject it
+      # before compilation instead of shipping an unusable artifact.
+      - name: Validate expiry input
+        shell: bash
+        env:
+          EXPIRY: ${{ inputs.expiry }}
+        run: |
+          if [[ -n "$EXPIRY" && ! "$EXPIRY" =~ ^[1-9][0-9]*$ && ! "$EXPIRY" =~ ^[0-9]{4}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])$ ]]; then
+            echo "::error::expiry must be a number of days (e.g. 365) or a UTC date (2027-11-09); empty means never expires"
+            exit 1
+          fi
 
       - name: Set up .NET 9
         uses: actions/setup-dotnet@v4
@@ -106,20 +123,20 @@ jobs:
       # the mobile TFMs, so IncludeMobileTargets=false strips them to net9.0 for
       # these builds (a solution build / restore evaluates every TFM otherwise).
       - name: Restore
-        run: dotnet restore OpenIPC.Viewer.Desktop.slnx -p:IncludeMobileTargets=false
+        run: dotnet restore OpenIPC.Viewer.Desktop.slnx -p:IncludeMobileTargets=false -p:OpenIpcExpiry=${{ inputs.expiry }}
 
       - name: Build
-        run: dotnet build OpenIPC.Viewer.Desktop.slnx --configuration Release --no-restore /warnaserror -p:IncludeMobileTargets=false
+        run: dotnet build OpenIPC.Viewer.Desktop.slnx --configuration Release --no-restore /warnaserror -p:IncludeMobileTargets=false -p:OpenIpcExpiry=${{ inputs.expiry }}
 
       - name: Test
         # -m:1: one test project at a time. Run side by side on windows-latest, Devices.Tests'
         # ONVIF stub cameras (HttpListener, i.e. http.sys) and Infrastructure.Tests' loopback
         # TcpListeners — both on ports picked by the OS — made five ONVIF tests time out, most
         # likely a request reaching the other project's listener. The tests take seconds anyway.
-        run: dotnet test OpenIPC.Viewer.Desktop.slnx --configuration Release --no-build -m:1 --verbosity normal -p:IncludeMobileTargets=false
+        run: dotnet test OpenIPC.Viewer.Desktop.slnx --configuration Release --no-build -m:1 --verbosity normal -p:IncludeMobileTargets=false -p:OpenIpcExpiry=${{ inputs.expiry }}
 
       - name: Publish
-        run: dotnet publish src/OpenIPC.Viewer.Desktop/OpenIPC.Viewer.Desktop.csproj -c Release -r ${{ matrix.rid }} --self-contained true /p:PublishSingleFile=true /p:IncludeNativeLibrariesForSelfExtract=true -p:IncludeMobileTargets=false -o publish/${{ matrix.rid }}
+        run: dotnet publish src/OpenIPC.Viewer.Desktop/OpenIPC.Viewer.Desktop.csproj -c Release -r ${{ matrix.rid }} --self-contained true /p:PublishSingleFile=true /p:IncludeNativeLibrariesForSelfExtract=true -p:IncludeMobileTargets=false -o publish/${{ matrix.rid }} -p:OpenIpcExpiry=${{ inputs.expiry }}
 
       - name: Package (zip)
         if: matrix.archive == 'zip'
@@ -155,6 +172,16 @@ jobs:
       ANDROID_KEY_PASS: ${{ secrets.ANDROID_KEY_PASS }}
     steps:
       - uses: actions/checkout@v4
+
+      - name: Validate expiry input
+        shell: bash
+        env:
+          EXPIRY: ${{ inputs.expiry }}
+        run: |
+          if [[ -n "$EXPIRY" && ! "$EXPIRY" =~ ^[1-9][0-9]*$ && ! "$EXPIRY" =~ ^[0-9]{4}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])$ ]]; then
+            echo "::error::expiry must be a number of days (e.g. 365) or a UTC date (2027-11-09); empty means never expires"
+            exit 1
+          fi
 
       - name: Set up JDK 17
         uses: actions/setup-java@v4
@@ -203,10 +230,10 @@ jobs:
         run: bash tools/build-ffmpeg-android.sh
 
       - name: Restore
-        run: dotnet restore src/OpenIPC.Viewer.Android/OpenIPC.Viewer.Android.csproj
+        run: dotnet restore src/OpenIPC.Viewer.Android/OpenIPC.Viewer.Android.csproj -p:OpenIpcExpiry=${{ inputs.expiry }}
 
       - name: Build (Release, warnings as errors)
-        run: dotnet build src/OpenIPC.Viewer.Android/OpenIPC.Viewer.Android.csproj -c Release --no-restore -p:TreatWarningsAsErrors=true
+        run: dotnet build src/OpenIPC.Viewer.Android/OpenIPC.Viewer.Android.csproj -c Release --no-restore -p:TreatWarningsAsErrors=true -p:OpenIpcExpiry=${{ inputs.expiry }}
 
       # versionCode must grow monotonically or Android refuses to install the
       # new APK over the old one ("app already installed"). Derived from the
@@ -249,10 +276,10 @@ jobs:
       # listed RID into the APK whatever -r says, so without it both APKs carried both ABIs
       # (~71 MB each instead of ~36 MB).
       - name: Publish APK (android-arm64)
-        run: dotnet publish src/OpenIPC.Viewer.Android/OpenIPC.Viewer.Android.csproj -c Release -f net10.0-android -r android-arm64 -p:RuntimeIdentifiers=android-arm64 -o publish/android-arm64 -p:ApplicationVersion="${APP_VERSION:-1}" -p:ApplicationDisplayVersion="${APP_DISPLAY_VERSION:-0.1.0-beta}" $SIGN_ARGS
+        run: dotnet publish src/OpenIPC.Viewer.Android/OpenIPC.Viewer.Android.csproj -c Release -f net10.0-android -r android-arm64 -p:RuntimeIdentifiers=android-arm64 -o publish/android-arm64 -p:ApplicationVersion="${APP_VERSION:-1}" -p:ApplicationDisplayVersion="${APP_DISPLAY_VERSION:-0.1.0-beta}" $SIGN_ARGS -p:OpenIpcExpiry=${{ inputs.expiry }}
 
       - name: Publish APK (android-x64)
-        run: dotnet publish src/OpenIPC.Viewer.Android/OpenIPC.Viewer.Android.csproj -c Release -f net10.0-android -r android-x64 -p:RuntimeIdentifiers=android-x64 -o publish/android-x64 -p:ApplicationVersion="${APP_VERSION:-1}" -p:ApplicationDisplayVersion="${APP_DISPLAY_VERSION:-0.1.0-beta}" $SIGN_ARGS
+        run: dotnet publish src/OpenIPC.Viewer.Android/OpenIPC.Viewer.Android.csproj -c Release -f net10.0-android -r android-x64 -p:RuntimeIdentifiers=android-x64 -o publish/android-x64 -p:ApplicationVersion="${APP_VERSION:-1}" -p:ApplicationDisplayVersion="${APP_DISPLAY_VERSION:-0.1.0-beta}" $SIGN_ARGS -p:OpenIpcExpiry=${{ inputs.expiry }}
 
       # Hard gate against shipping a corrupt APK. Both v0.3.4 and v0.3.6 went out
       # with a bad CRC-32 on lib/<abi>/libassembly-store.so (a floating-toolchain
@@ -305,6 +332,16 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Validate expiry input
+        shell: bash
+        env:
+          EXPIRY: ${{ inputs.expiry }}
+        run: |
+          if [[ -n "$EXPIRY" && ! "$EXPIRY" =~ ^[1-9][0-9]*$ && ! "$EXPIRY" =~ ^[0-9]{4}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])$ ]]; then
+            echo "::error::expiry must be a number of days (e.g. 365) or a UTC date (2027-11-09); empty means never expires"
+            exit 1
+          fi
+
       - name: Set up .NET 10
         uses: actions/setup-dotnet@v4
         with:
@@ -317,16 +354,16 @@ jobs:
       # RID-specific or the assets file won't have a net10.0-ios/ios-arm64
       # target and the --no-restore build fails with NETSDK1047.
       - name: Restore
-        run: dotnet restore src/OpenIPC.Viewer.iOS/OpenIPC.Viewer.iOS.csproj -r ios-arm64
+        run: dotnet restore src/OpenIPC.Viewer.iOS/OpenIPC.Viewer.iOS.csproj -r ios-arm64 -p:OpenIpcExpiry=${{ inputs.expiry }}
 
       - name: Build (Release, warnings as errors)
-        run: dotnet build src/OpenIPC.Viewer.iOS/OpenIPC.Viewer.iOS.csproj -c Release -r ios-arm64 --no-restore -p:TreatWarningsAsErrors=true
+        run: dotnet build src/OpenIPC.Viewer.iOS/OpenIPC.Viewer.iOS.csproj -c Release -r ios-arm64 --no-restore -p:TreatWarningsAsErrors=true -p:OpenIpcExpiry=${{ inputs.expiry }}
 
       # Unsigned IPA — TestFlight signing is post-MVP (Phase 11). The artifact
       # is a Release-published app bundle suitable for ad-hoc install via Xcode
       # or for someone with credentials to sign + upload later.
       - name: Publish (ios-arm64, unsigned)
-        run: dotnet publish src/OpenIPC.Viewer.iOS/OpenIPC.Viewer.iOS.csproj -c Release -f net10.0-ios -r ios-arm64 -p:CodesignKey= -p:ArchiveOnBuild=true -o publish/ios-arm64 || true
+        run: dotnet publish src/OpenIPC.Viewer.iOS/OpenIPC.Viewer.iOS.csproj -c Release -f net10.0-ios -r ios-arm64 -p:CodesignKey= -p:ArchiveOnBuild=true -p:OpenIpcExpiry=${{ inputs.expiry }} -o publish/ios-arm64 || true
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4

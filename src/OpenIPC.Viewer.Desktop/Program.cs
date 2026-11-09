@@ -2,6 +2,7 @@ using System;
 using Avalonia;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
+using OpenIPC.Viewer.Core;
 
 namespace OpenIPC.Viewer.Desktop;
 
@@ -18,8 +19,19 @@ internal static class Program
 
         // Headless web-server mode (Phase 20): run Kestrel without Avalonia and
         // return, before the single-instance guard or any GUI service spins up.
+        // It never reaches App.OnFrameworkInitializationCompleted, so an expired
+        // time-limited build has to be rejected here as well (there is no window
+        // to show the notice in). The normal GUI path keeps going and App shows
+        // the expiry screen instead of the main window.
         if (ServerOnly.IsRequested(args))
+        {
+            if (BuildExpiration.IsExpired())
+            {
+                Console.Error.WriteLine("此版本已过期 / This build has expired.");
+                return 1;
+            }
             return ServerOnly.Run(args);
+        }
 
         // Opt-in single-instance mode: when another copy already runs and the
         // user enabled the guard, hand focus to it and bail out before any

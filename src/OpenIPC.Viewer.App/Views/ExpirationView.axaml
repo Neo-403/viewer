@@ -1,0 +1,41 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="using:OpenIPC.Viewer.App.ViewModels"
+             x:Class="OpenIPC.Viewer.App.Views.ExpirationView"
+             x:DataType="vm:ExpirationViewModel"
+             Background="{StaticResource Bg1Brush}">
+
+  <!-- The only screen an expired build shows. Hosted by ExpirationWindow on
+       desktop and used directly as the MainView on Android/iOS. -->
+  <Border Background="{StaticResource Bg0Brush}"
+          BorderBrush="{StaticResource BorderMediumBrush}"
+          BorderThickness="1"
+          CornerRadius="8"
+          Margin="24"
+          Padding="28">
+    <StackPanel Spacing="14"
+                MaxWidth="420"
+                HorizontalAlignment="Center"
+                VerticalAlignment="Center">
+      <TextBlock Text="{Binding Title}"
+                 FontSize="20" FontWeight="SemiBold"
+                 Foreground="{StaticResource DangerBrush}"
+                 TextWrapping="Wrap" />
+      <TextBlock Text="{Binding Message}"
+                 FontSize="13"
+                 Foreground="{StaticResource TextPrimaryBrush}"
+                 TextWrapping="Wrap" />
+      <TextBlock Text="{Binding ExpiresAtText}"
+                 IsVisible="{Binding HasExpiresAtText}"
+                 FontSize="12"
+                 Foreground="{StaticResource TextTertiaryBrush}"
+                 TextWrapping="Wrap" />
+      <Button Content="{Binding ExitText}"
+              Command="{Binding ExitCommand}"
+              HorizontalAlignment="Right"
+              Padding="16,7" CornerRadius="6"
+              Background="{StaticResource AccentBrush}"
+              Foreground="White" />
+    </StackPanel>
+  </Border>
+</UserControl>

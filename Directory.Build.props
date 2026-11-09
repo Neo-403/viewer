@@ -26,8 +26,23 @@
   <PropertyGroup>
     <UpdateFeed Condition="'$(UpdateFeed)' == ''">github:Neo-403/viewer</UpdateFeed>
   </PropertyGroup>
+
+  <!-- Optional build expiry, set with -p:OpenIpcExpiry=... Empty (the default)
+       means the build never expires. Accepted values: a number of days counted
+       from build time (e.g. 365) or a UTC date (2027-11-09) that stays usable
+       for the whole day. The raw value plus the build timestamp are stamped
+       into every assembly; Core/BuildExpiration.cs resolves them at runtime.
+       A time-limited build must not be able to replace itself, so its update
+       feed is forced to none and the settings page hides the repo links. -->
+  <PropertyGroup>
+    <OpenIpcExpiry Condition="'$(OpenIpcExpiry)' == ''"></OpenIpcExpiry>
+    <OpenIpcBuiltAt Condition="'$(OpenIpcExpiry)' != ''">$([System.DateTime]::UtcNow.ToString('o'))</OpenIpcBuiltAt>
+    <UpdateFeed Condition="'$(OpenIpcExpiry)' != ''">none</UpdateFeed>
+  </PropertyGroup>
   <ItemGroup>
     <AssemblyMetadata Include="OpenIpc.UpdateFeed" Value="$(UpdateFeed)" />
+    <AssemblyMetadata Include="OpenIpc.Expiry" Value="$(OpenIpcExpiry)" />
+    <AssemblyMetadata Include="OpenIpc.BuiltAt" Value="$(OpenIpcBuiltAt)" />
   </ItemGroup>
 
   <PropertyGroup Condition="'$(TargetFramework)' != 'netstandard2.1'">
