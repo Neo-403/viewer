@@ -44,6 +44,9 @@ public sealed partial class CameraTileViewModel : ViewModelBase, IAsyncDisposabl
     private readonly bool _stillsMode;
     private readonly int _stillsIntervalSeconds;
     private readonly double _stillsPhaseMs;
+    // Largest JPEG width this tile can display. Passed to the camera so it
+    // scales the still server-side instead of shipping a full-res frame.
+    private readonly int _stillsMaxWidth;
     private CancellationTokenSource? _stillsCts;
 
     [ObservableProperty] private Bitmap? _stillFrame;
@@ -58,6 +61,7 @@ public sealed partial class CameraTileViewModel : ViewModelBase, IAsyncDisposabl
     public bool StillsMode => _stillsMode;
     public int StillsIntervalSeconds => _stillsIntervalSeconds;
     public double StillsPhaseMs => _stillsPhaseMs;
+    public int StillsMaxWidth => _stillsMaxWidth;
 
     // On a stream fault we TCP-probe the camera so the status policy can tell a
     // wedged-but-alive camera (Attention) from a truly unreachable one (Offline).
@@ -260,6 +264,7 @@ public sealed partial class CameraTileViewModel : ViewModelBase, IAsyncDisposabl
         bool stillsMode,
         int stillsIntervalSeconds,
         double stillsPhaseMs,
+        int stillsMaxWidth,
         ILogger<CameraTileViewModel> logger)
     {
         Camera = camera;
@@ -276,6 +281,7 @@ public sealed partial class CameraTileViewModel : ViewModelBase, IAsyncDisposabl
         _stillsMode = stillsMode;
         _stillsIntervalSeconds = stillsIntervalSeconds;
         _stillsPhaseMs = stillsPhaseMs;
+        _stillsMaxWidth = stillsMaxWidth;
         _logger = logger;
 
         _coordinator.Invalidated += OnCoordinatorInvalidated;
@@ -567,8 +573,8 @@ public sealed partial class CameraTileViewModel : ViewModelBase, IAsyncDisposabl
                 // HTTP /image.jpg first (cheap); cameras without one get a
                 // single JPEG off a briefly-opened RTSP stream. Never a live
                 // session — the whole point of stills mode is no decoder.
-                var bytes = await _frameSource.GrabAsync(Camera, ct).ConfigureAwait(false)
-                            ?? await _snapshots.GrabFrameAsync(Camera, ct).ConfigureAwait(false);
+                var bytes = await _frameSource.GrabAsync(Camera, _stillsMaxWidth, ct).ConfigureAwait(false)
+                            ?? await _snapshots.GrabFrameAsync(Camera, _stillsMaxWidth, ct).ConfigureAwait(false);
                 var bmp = bytes is { Length: > 0 } ? DecodeJpeg(bytes) : null;
                 if (bmp is not null)
                 {

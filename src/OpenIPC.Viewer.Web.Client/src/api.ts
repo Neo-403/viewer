@@ -287,9 +287,14 @@ export const api = {
     req<{ id: string; sizeBytes: number }>('POST', `/api/v1/cameras/${cameraId}/recording/stop`),
 
   // A fresh still, straight from the camera (Majestic /image.jpg when available,
-  // otherwise one ffmpeg pull). Used as an <img> src and as a download target,
-  // so it's a URL rather than a fetch wrapper.
-  snapshotUrl: (id: string) => `/api/v1/cameras/${id}/snapshot`,
+  // otherwise one ffmpeg pull). Grid tiles pass a max width: the camera resizes
+  // server-side and the RTSP fallback uses the substream. Omitting it keeps the
+  // full-resolution frame for the preview/download dialog.
+  // Used as an <img> src and as a download target, hence a URL, not a fetch.
+  snapshotUrl: (id: string, maxWidth = 0) =>
+    maxWidth > 0
+      ? `/api/v1/cameras/${id}/snapshot?w=${maxWidth}`
+      : `/api/v1/cameras/${id}/snapshot`,
 
   // Keep a still: captured the same way as the preview above, but written into
   // the shared library so the desktop gallery sees it too.

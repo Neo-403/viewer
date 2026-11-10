@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.Threading;
@@ -40,7 +41,9 @@ public static class SnapshotApi
 
     public static void MapSnapshotEndpoints(this WebApplication app)
     {
-        app.MapGet("/api/v1/cameras/{id}/snapshot", async (string id, HttpContext ctx, CancellationToken ct) =>
+        // ?w= asks for a grid-sized still: the camera resizes it, and the RTSP
+        // fallback uses the substream. Omitted (SnapshotModal / downloads) = HD.
+        app.MapGet("/api/v1/cameras/{id}/snapshot", async (string id, int? w, HttpContext ctx, CancellationToken ct) =>
         {
             // Seeing a still is seeing the camera — same permission as live.
             if (ctx.Deny(WebPermission.ViewLive) is { } denied)
@@ -61,7 +64,8 @@ public static class SnapshotApi
             var credentials = await dir.GetCredentialsAsync(camera.Id, ct);
             var logger = ctx.RequestServices.GetRequiredService<ILoggerFactory>().CreateLogger("OpenIPC.Web.Snapshot");
 
-            var (jpeg, _) = await CaptureAsync(ctx, camera, credentials, logger, ct);
+            var maxWidth = MajesticSnapshotOptions.ClampWidth(w ?? 0);
+            var (jpeg, _) = await CaptureAsync(ctx, camera, credentials, logger, ct, maxWidth);
 
             if (jpeg is null || jpeg.Length == 0)
                 return Results.Json(new { error = "snapshot_failed" }, statusCode: StatusCodes.Status502BadGateway);
@@ -78,20 +82,24 @@ public static class SnapshotApi
     // different (worse) picture than the preview the viewer just approved. The
     // source travels with the bytes because the row records it: an HD-always
     // snapshot must never claim it came off the substream.
+    // maxWidth = 0 keeps the original HD behaviour (saved snapshots, the
+    // full-size preview and downloads). Grid stills pass the tile width.
     internal static async Task<(byte[]? Jpeg, SnapshotSource Source)> CaptureAsync(
-        HttpContext ctx, Camera camera, CameraCredentials? credentials, ILogger logger, CancellationToken ct)
+        HttpContext ctx, Camera camera, CameraCredentials? credentials, ILogger logger, CancellationToken ct,
+        int maxWidth = 0)
     {
-        var majestic = await TryMajesticAsync(ctx, camera, credentials, logger, ct);
+        var majestic = await TryMajesticAsync(ctx, camera, credentials, logger, maxWidth, ct);
         if (majestic is { Length: > 0 })
             return (majestic, SnapshotSource.HttpSnapshot);
 
-        // ffmpeg pulls one keyframe off the mainstream — the same thing the
-        // desktop calls OpenedStream.
-        return (await TryFfmpegAsync(camera, credentials, logger, ct), SnapshotSource.OpenedStream);
+        // ffmpeg pulls one keyframe — off the mainstream for an HD capture,
+        // off the substream (and scaled) for a grid tile.
+        return (await TryFfmpegAsync(camera, credentials, logger, maxWidth, ct), SnapshotSource.OpenedStream);
     }
 
     private static async Task<byte[]?> TryMajesticAsync(
-        HttpContext ctx, Camera camera, CameraCredentials? credentials, ILogger logger, CancellationToken ct)
+        HttpContext ctx, Camera camera, CameraCredentials? credentials, ILogger logger,
+        int maxWidth, CancellationToken ct)
     {
         var majestic = ctx.RequestServices.GetService<IMajesticClient>();
         if (majestic is null)
@@ -102,10 +110,20 @@ public static class SnapshotApi
             using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
             timeout.CancelAfter(camera.IsMajestic ? MajesticTimeout : MajesticProbeTimeout);
             var endpoint = new MajesticEndpoint(camera.Host, camera.HttpPort, credentials);
-            var bytes = await majestic.SnapshotJpegAsync(endpoint, new MajesticSnapshotOptions(), timeout.Token);
+            var options = MajesticSnapshotOptions.ForGrid(maxWidth);
+            var bytes = await majestic.SnapshotJpegAsync(endpoint, options, timeout.Token);
             // A non-Majestic web server can answer 200 with its login page.
             // Only a real JPEG (SOI marker) may be served as image/jpeg.
-            return IsJpeg(bytes) ? bytes : null;
+            if (IsJpeg(bytes)) return bytes;
+            // Some firmware ignores or rejects the ?width= form. Retry the
+            // native endpoint once so a grid tile never goes blank on a
+            // compatibility quirk.
+            if (options.Width is not null)
+            {
+                var native = await majestic.SnapshotJpegAsync(endpoint, new MajesticSnapshotOptions(), timeout.Token);
+                return IsJpeg(native) ? native : null;
+            }
+            return null;
         }
         catch (Exception ex)
         {
@@ -117,12 +135,19 @@ public static class SnapshotApi
     private static bool IsJpeg(byte[]? bytes) =>
         bytes is { Length: > 2 } && bytes[0] == 0xFF && bytes[1] == 0xD8;
 
-    // One frame off the mainstream. Writes to stdout so nothing lands on disk,
-    // and dies with the request if the camera stops answering mid-pull.
+    // One frame, written to stdout so nothing lands on disk, dying with the
+    // request if the camera stops answering mid-pull. Grid stills use the
+    // substream; HD captures keep the mainstream untouched.
     private static async Task<byte[]?> TryFfmpegAsync(
-        Camera camera, CameraCredentials? credentials, ILogger logger, CancellationToken ct)
+        Camera camera, CameraCredentials? credentials, ILogger logger, int maxWidth, CancellationToken ct)
     {
-        var url = BuildRtspUrl(camera.RtspMainUri, credentials);
+        var grid = maxWidth > 0;
+        var hasSub = grid && camera.RtspSubUri is not null;
+        // A substream is already tile-sized, so don't re-scale (upscaling a
+        // 352x288 stream only makes the JPEG bigger and softer). Cameras with
+        // no substream must use the mainstream — scale that one down instead.
+        var uri = hasSub ? camera.RtspSubUri! : camera.RtspMainUri;
+        var url = BuildRtspUrl(uri, credentials);
         var psi = new ProcessStartInfo(LiveFfmpeg.ResolveExecutable())
         {
             RedirectStandardOutput = true,
@@ -130,15 +155,26 @@ public static class SnapshotApi
             UseShellExecute = false,
             CreateNoWindow = true,
         };
-        foreach (var arg in new[]
-                 {
-                     "-rtsp_transport", "tcp", LiveFfmpeg.RtspTimeoutFlag(), LiveFfmpeg.RtspTimeoutMicros, "-i", url,
-                     "-frames:v", "1", "-q:v", "3",
-                     "-f", "image2pipe", "-vcodec", "mjpeg", "pipe:1",
-                 })
+        var args = new List<string>
         {
-            psi.ArgumentList.Add(arg);
+            "-rtsp_transport", "tcp", LiveFfmpeg.RtspTimeoutFlag(), LiveFfmpeg.RtspTimeoutMicros,
+            // Start decoding sooner → less stream pulled before the first frame.
+            "-analyzeduration", "1000000", "-probesize", "65536",
+            "-i", url,
+            "-an", // one still needs no audio track
+            "-frames:v", "1",
+        };
+        if (grid && !hasSub)
+        {
+            args.Add("-vf");
+            args.Add($"scale={maxWidth}:-2");
         }
+        args.AddRange(new[]
+        {
+            "-q:v", "3", "-f", "image2pipe", "-vcodec", "mjpeg", "pipe:1",
+        });
+        foreach (var arg in args)
+            psi.ArgumentList.Add(arg);
 
         Process? proc = null;
         try

@@ -29,11 +29,14 @@ public interface ISnapshotService
     /// <summary>
     /// Grabs one JPEG frame without saving, thumbnailing or DB-indexing it.
     /// Powers the grid's stills loop, which refreshes every N seconds and must
-    /// not fill the snapshot library. Uses the same HD-source priority as
-    /// <see cref="CaptureAsync"/>. Returns null when no source answered, so the
-    /// caller can keep the previously displayed frame.
+    /// not fill the snapshot library. Unlike <see cref="CaptureAsync"/> this is
+    /// deliberately cheap: a resized HTTP still, or one frame off the
+    /// SUBSTREAM — a grid cell cannot show the difference, while a mainstream
+    /// session costs an order of magnitude more bandwidth.
+    /// <paramref name="maxWidth"/> is the tile width (0 = native). Returns null
+    /// when no source answered, so the caller keeps the previous frame.
     /// </summary>
-    Task<byte[]?> GrabFrameAsync(Camera camera, CancellationToken ct);
+    Task<byte[]?> GrabFrameAsync(Camera camera, int maxWidth, CancellationToken ct);
 
     /// <summary>
     /// Renders <paramref name="edit"/> over <paramref name="source"/> and saves

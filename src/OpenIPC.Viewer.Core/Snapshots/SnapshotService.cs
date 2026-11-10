@@ -23,6 +23,9 @@ public sealed class SnapshotService : ISnapshotService
     private const int ThumbMaxDim = 320;
 
     private static readonly TimeSpan MajesticTimeout = TimeSpan.FromSeconds(5);
+    // The grid retries HTTP once before paying for an RTSP session. Keep it
+    // short: the primary HTTP probe already ran in HttpSnapshotFrameSource.
+    private static readonly TimeSpan GridHttpTimeout = TimeSpan.FromSeconds(2);
     private static readonly TimeSpan FreshOpenFrameTimeout = TimeSpan.FromSeconds(8);
 
     private readonly IMajesticClient _majestic;
@@ -92,22 +95,57 @@ public sealed class SnapshotService : ISnapshotService
         SaveAsync(cameraId, jpeg, SnapshotSource.Recording, SnapshotKind.Manual, takenAtUtc, ct);
 
     // Stills-mode fallback for cameras with no HTTP snapshot endpoint: briefly
-    // open the mainstream, take one JPEG, release. Unlike CaptureAsync this
+    // open the SUBSTREAM, take one JPEG, release. Unlike CaptureAsync this
     // never writes to disk or adds a row — the grid calls it every few seconds.
-    public async Task<byte[]?> GrabFrameAsync(Camera camera, CancellationToken ct)
+    //
+    // Saved snapshots must stay HD, so this deliberately does NOT share
+    // GrabAsync's mainstream-first priority. A grid cell is a few hundred
+    // pixels wide: it cannot show the difference, while a mainstream session
+    // costs ~8x the bandwidth and used to be re-opened for every camera on
+    // every refresh — the multi-MB/s spikes on a stills wall.
+    public async Task<byte[]?> GrabFrameAsync(Camera camera, int maxWidth, CancellationToken ct)
     {
         try
         {
-            var (jpeg, _) = await GrabAsync(camera, null, null, ct).ConfigureAwait(false);
-            return jpeg.Length > 0 ? jpeg : null;
+            // The tile already tried the HTTP endpoint once; retry briefly so a
+            // transient miss doesn't force a whole RTSP session open.
+            var http = await TryGridHttpAsync(camera, maxWidth, ct).ConfigureAwait(false);
+            if (http is not null) return http;
+
+            return await GrabFromFreshStreamAsync(camera, preferSubstream: true, ct).ConfigureAwait(false);
         }
         catch (Exception)
         {
-            // GrabAsync throws when every source failed — a transient miss must
-            // leave the previous still on screen rather than blanking the tile.
+            // A transient miss must leave the previous still on screen rather
+            // than blanking the tile.
             return null;
         }
     }
+
+    private async Task<byte[]?> TryGridHttpAsync(Camera camera, int maxWidth, CancellationToken ct)
+    {
+        try
+        {
+            var creds = await _credentials.GetCredentialsAsync(camera.Id, ct).ConfigureAwait(false);
+            var endpoint = new MajesticEndpoint(camera.Host, camera.HttpPort, creds);
+            using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            cts.CancelAfter(GridHttpTimeout);
+            // Ask the camera to resize: full-res JPEGs are the other half of
+            // the bandwidth problem. 0 (single-camera still) means "native".
+            var b = await _majestic
+                .SnapshotJpegAsync(endpoint, MajesticSnapshotOptions.ForGrid(maxWidth), cts.Token)
+                .ConfigureAwait(false);
+            // A non-Majestic web server can answer 200 with its login page.
+            return IsJpeg(b) ? b : null;
+        }
+        catch (Exception)
+        {
+            return null;
+        }
+    }
+
+    private static bool IsJpeg(byte[]? bytes) =>
+        bytes is { Length: > 2 } && bytes[0] == 0xFF && bytes[1] == 0xD8;
 
     private async Task<(byte[] Jpeg, SnapshotSource Source)> GrabAsync(
         Camera camera, IVideoSession? liveSession, StreamQuality? liveQuality, CancellationToken ct)
@@ -174,16 +212,27 @@ public sealed class SnapshotService : ISnapshotService
         }
     }
 
-    private async Task<byte[]?> GrabFromFreshMainAsync(Camera camera, CancellationToken ct)
+    // HD capture path — never downgraded, so saved snapshots stay full quality.
+    private Task<byte[]?> GrabFromFreshMainAsync(Camera camera, CancellationToken ct) =>
+        GrabFromFreshStreamAsync(camera, preferSubstream: false, ct);
+
+    private async Task<byte[]?> GrabFromFreshStreamAsync(Camera camera, bool preferSubstream, CancellationToken ct)
     {
         var creds = await _credentials.GetCredentialsAsync(camera.Id, ct).ConfigureAwait(false);
+        // Grid stills use the substream when the camera has one; it is already
+        // encoded at a resolution that matches a small tile, at a fraction of
+        // the mainstream bitrate. CaptureAsync passes false and keeps HD.
+        var useSub = preferSubstream && camera.RtspSubUri is not null;
+        var quality = useSub ? StreamQuality.Sub : StreamQuality.Main;
+        var uri = useSub ? camera.RtspSubUri! : camera.RtspMainUri;
+
         // No auto-reconnect: this is a one-shot grab, we don't want a lingering
         // reconnect loop after we release.
-        var options = VideoSessionOptions.Default(camera.RtspMainUri, creds) with { AutoReconnect = false };
+        var options = VideoSessionOptions.Default(uri, creds) with { AutoReconnect = false };
 
-        // Acquire is ref-counted: if a mainstream is already up (another viewer),
+        // Acquire is ref-counted: if that stream is already up (another viewer),
         // we share it and grab immediately; otherwise we own a fresh one.
-        var session = _coordinator.Acquire(camera.Id, StreamQuality.Main, options);
+        var session = _coordinator.Acquire(camera.Id, quality, options);
         try
         {
             if (session.State == SessionState.Idle)
@@ -203,7 +252,7 @@ public sealed class SnapshotService : ISnapshotService
         }
         finally
         {
-            await _coordinator.ReleaseAsync(camera.Id, StreamQuality.Main).ConfigureAwait(false);
+            await _coordinator.ReleaseAsync(camera.Id, quality).ConfigureAwait(false);
         }
     }
 

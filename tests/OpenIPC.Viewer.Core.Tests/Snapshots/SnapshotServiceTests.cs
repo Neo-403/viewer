@@ -81,11 +81,12 @@ public sealed class SnapshotServiceTests
     [Fact]
     public async Task GrabFrame_DoesNotPersist_WhenMajesticAnswers()
     {
-        var (svc, ctx) = Build(majesticBytes: Bytes("HTTP"), freshFrame: null);
+        var (svc, ctx) = Build(majesticBytes: Jpeg("HTTP"), freshFrame: null);
 
-        var frame = await svc.GrabFrameAsync(Cam(majestic: true), CancellationToken.None);
+        var frame = await svc.GrabFrameAsync(Cam(majestic: true), 640, CancellationToken.None);
 
-        Assert.Equal("HTTP", System.Text.Encoding.ASCII.GetString(frame!));
+        Assert.Equal(Jpeg("HTTP"), frame);
+        Assert.Equal(640, ctx.Majestic.LastOptions?.Width); // camera-side resize
         Assert.Empty(ctx.Repo.Added); // refreshing every N seconds must not fill the gallery
     }
 
@@ -96,7 +97,7 @@ public sealed class SnapshotServiceTests
         // still; returning nothing made the grid silently play live RTSP.
         var (svc, ctx) = Build(majesticBytes: null, freshFrame: Bytes("OPEN"));
 
-        var frame = await svc.GrabFrameAsync(Cam(majestic: false), CancellationToken.None);
+        var frame = await svc.GrabFrameAsync(Cam(majestic: false), 640, CancellationToken.None);
 
         Assert.Equal("OPEN", System.Text.Encoding.ASCII.GetString(frame!));
         Assert.Empty(ctx.Repo.Added);
@@ -107,14 +108,76 @@ public sealed class SnapshotServiceTests
     {
         var (svc, _) = Build(majesticBytes: null, freshFrame: null);
 
-        var frame = await svc.GrabFrameAsync(Cam(majestic: false), CancellationToken.None);
+        var frame = await svc.GrabFrameAsync(Cam(majestic: false), 640, CancellationToken.None);
 
         Assert.Null(frame); // caller keeps the previous still on screen
+    }
+
+    // --- bandwidth: grid stills must not pull the mainstream ---------------
+
+    [Fact]
+    public async Task GrabFrame_OpensSubstream_AndRequestsAResizedStill()
+    {
+        // The expensive path used to be: one full mainstream RTSP session per
+        // camera per refresh. A grid tile cannot show the difference.
+        var (svc, ctx) = Build(majesticBytes: null, freshFrame: Bytes("OPEN"));
+
+        var frame = await svc.GrabFrameAsync(Cam(majestic: false), 640, CancellationToken.None);
+
+        Assert.Equal(Bytes("OPEN"), frame);
+        Assert.Equal("rtsp://10.0.0.5/sub", ctx.Engine.LastOptions?.RtspUri.ToString());
+        Assert.Equal(640, ctx.Majestic.LastOptions?.Width);
+    }
+
+    [Fact]
+    public async Task GrabFrame_FallsBackToMainstream_WhenCameraHasNoSubstream()
+    {
+        var (svc, ctx) = Build(majesticBytes: null, freshFrame: Bytes("OPEN"));
+        var camera = Cam(majestic: false) with { RtspSubUri = null };
+
+        var frame = await svc.GrabFrameAsync(camera, 640, CancellationToken.None);
+
+        Assert.Equal(Bytes("OPEN"), frame);
+        Assert.Equal("rtsp://10.0.0.5/main", ctx.Engine.LastOptions?.RtspUri.ToString());
+    }
+
+    [Fact]
+    public async Task CaptureAsync_StillUsesNativeResolutionHttpSnapshot()
+    {
+        // Saved snapshots must stay HD — the grid optimisation may not leak
+        // into the user's "take a snapshot" action.
+        var (svc, ctx) = Build(majesticBytes: Jpeg("HTTP"), freshFrame: null);
+
+        await svc.CaptureAsync(Cam(majestic: true), null, null, CancellationToken.None);
+
+        Assert.NotNull(ctx.Majestic.LastOptions);
+        Assert.Null(ctx.Majestic.LastOptions!.Width);
+    }
+
+    [Fact]
+    public async Task CaptureAsync_StillOpensTheMainstream()
+    {
+        var (svc, ctx) = Build(majesticBytes: null, freshFrame: Bytes("OPEN"));
+
+        await svc.CaptureAsync(Cam(majestic: false), null, null, CancellationToken.None);
+
+        Assert.Equal("rtsp://10.0.0.5/main", ctx.Engine.LastOptions?.RtspUri.ToString());
     }
 
     // --- harness ---
 
     private static byte[] Bytes(string s) => System.Text.Encoding.ASCII.GetBytes(s);
+
+    // A real JPEG starts with SOI; the grid path validates that marker.
+    private static byte[] Jpeg(string s)
+    {
+        var payload = Bytes(s);
+        var bytes = new byte[payload.Length + 2];
+        bytes[0] = 0xFF;
+        bytes[1] = 0xD8;
+        payload.CopyTo(bytes, 2);
+        return bytes;
+    }
 
     private static Camera Cam(bool majestic) => new(
         CameraId.New(), null, "Cam", "10.0.0.5", null, 80,
@@ -122,19 +185,19 @@ public sealed class SnapshotServiceTests
         null, null, false, null, null, null, true, false, majestic, 0,
         DateTime.UtcNow, DateTime.UtcNow);
 
-    private sealed record Ctx(FakeMajestic Majestic, FakeRepo Repo);
+    private sealed record Ctx(FakeMajestic Majestic, FakeRepo Repo, FakeEngine Engine);
 
     private static (SnapshotService Service, Ctx Ctx) Build(byte[]? majesticBytes, byte[]? freshFrame)
     {
         var majestic = new FakeMajestic(majesticBytes);
         var repo = new FakeRepo();
         var fs = new FakeFileSystem();
-        // The engine yields a fresh mainstream session only when freshFrame is set;
+        // The engine yields a fresh stream session only when freshFrame is set;
         // otherwise CreateSession throws so the brief-open path fails fast.
         var engine = new FakeEngine(freshFrame is null ? null : () => new FakeSession(freshFrame));
         var coordinator = new LiveStreamCoordinator(engine);
         var svc = new SnapshotService(majestic, coordinator, new FakeCreds(), repo, fs, new FakeThumbs(), new FakeEditor());
-        return (svc, new Ctx(majestic, repo));
+        return (svc, new Ctx(majestic, repo, engine));
     }
 
     private sealed class FakeSession : IVideoSession
@@ -165,19 +228,25 @@ public sealed class SnapshotServiceTests
     private sealed class FakeEngine : IVideoEngine
     {
         private readonly Func<IVideoSession>? _factory;
+        public VideoSessionOptions? LastOptions { get; private set; }
         public FakeEngine(Func<IVideoSession>? factory) => _factory = factory;
-        public IVideoSession CreateSession(VideoSessionOptions options) =>
-            _factory is null ? throw new InvalidOperationException("mainstream unavailable") : _factory();
+        public IVideoSession CreateSession(VideoSessionOptions options)
+        {
+            LastOptions = options;
+            return _factory is null ? throw new InvalidOperationException("stream unavailable") : _factory();
+        }
     }
 
     private sealed class FakeMajestic : IMajesticClient
     {
         private readonly byte[]? _bytes;
         public int SnapshotCalls { get; private set; }
+        public MajesticSnapshotOptions? LastOptions { get; private set; }
         public FakeMajestic(byte[]? bytes) => _bytes = bytes;
         public Task<byte[]> SnapshotJpegAsync(MajesticEndpoint endpoint, MajesticSnapshotOptions options, CancellationToken ct)
         {
             SnapshotCalls++;
+            LastOptions = options;
             return _bytes is null ? throw new InvalidOperationException("not majestic") : Task.FromResult(_bytes);
         }
         public Task<bool> PingAsync(MajesticEndpoint endpoint, CancellationToken ct) => Task.FromResult(_bytes is not null);

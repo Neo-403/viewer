@@ -13,6 +13,7 @@ using OpenIPC.Viewer.App.Messages;
 using OpenIPC.Viewer.App.Services;
 using OpenIPC.Viewer.App.ViewModels.Dialogs;
 using OpenIPC.Viewer.Core.Entities;
+using OpenIPC.Viewer.Core.Majestic;
 using OpenIPC.Viewer.Core.Services;
 using OpenIPC.Viewer.Core.Snapshots;
 using OpenIPC.Viewer.Core.Video;
@@ -523,6 +524,10 @@ public sealed partial class GridPageViewModel : ViewModelBase,
         // app restart. RefreshTilesAsync re-runs on every Live-tab entry (the
         // only time an edit can have landed), so the swap happens on next view.
         var stillsInterval = EffectiveStillsIntervalSeconds;
+        // A 1×1 tile fills the window, so keep it sharp; denser grids ask the
+        // camera for a much smaller JPEG. Changing the layout size re-runs
+        // this refresh, and the width is part of the tile's identity below.
+        var stillsMaxWidth = MajesticSnapshotOptions.ForGridSize(LayoutSize);
         for (var i = 0; i < visible.Count; i++)
         {
             var camera = visible[i];
@@ -545,7 +550,8 @@ public sealed partial class GridPageViewModel : ViewModelBase,
                     && !AnalyticsChanged(existing.Camera, camera)
                     && existing.StillsMode == StillsMode
                     && existing.StillsIntervalSeconds == stillsInterval
-                    && existing.StillsPhaseMs == phaseMs)
+                    && existing.StillsPhaseMs == phaseMs
+                    && existing.StillsMaxWidth == stillsMaxWidth)
                 {
                     // Kept tile — re-evaluate SD/HD against the (possibly new)
                     // layout. No-op when quality is unchanged.
@@ -559,7 +565,7 @@ public sealed partial class GridPageViewModel : ViewModelBase,
                 try { await existing.DisposeAsync().ConfigureAwait(true); }
                 catch (Exception ex) { _logger.LogWarning(ex, "Error releasing stale tile for {Camera}", camera.Name); }
 
-                var rebuilt = new CameraTileViewModel(camera, _coordinator, _directory, _userSettings, _snapshots, _analytics, _analyticsBootstrap, _audio, _reachability, _statusRegistry, _frameSource, StillsMode, stillsInterval, phaseMs, _loggerFactory.CreateLogger<CameraTileViewModel>());
+                var rebuilt = new CameraTileViewModel(camera, _coordinator, _directory, _userSettings, _snapshots, _analytics, _analyticsBootstrap, _audio, _reachability, _statusRegistry, _frameSource, StillsMode, stillsInterval, phaseMs, stillsMaxWidth, _loggerFactory.CreateLogger<CameraTileViewModel>());
                 rebuilt.SetInitialQuality(quality);
                 Tiles.Insert(idx, rebuilt);
                 try { await rebuilt.ActivateAsync(ct).ConfigureAwait(true); }
@@ -567,7 +573,7 @@ public sealed partial class GridPageViewModel : ViewModelBase,
                 continue;
             }
 
-            var tile = new CameraTileViewModel(camera, _coordinator, _directory, _userSettings, _snapshots, _analytics, _analyticsBootstrap, _audio, _reachability, _statusRegistry, _frameSource, StillsMode, stillsInterval, phaseMs, _loggerFactory.CreateLogger<CameraTileViewModel>());
+            var tile = new CameraTileViewModel(camera, _coordinator, _directory, _userSettings, _snapshots, _analytics, _analyticsBootstrap, _audio, _reachability, _statusRegistry, _frameSource, StillsMode, stillsInterval, phaseMs, stillsMaxWidth, _loggerFactory.CreateLogger<CameraTileViewModel>());
             tile.SetInitialQuality(quality);
             Tiles.Add(tile);
             try { await tile.ActivateAsync(ct).ConfigureAwait(true); }

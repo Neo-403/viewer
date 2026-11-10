@@ -24,5 +24,12 @@ public interface ISnapshotFrameSource
     /// </summary>
     bool Supports(Camera camera);
 
-    Task<byte[]?> GrabAsync(Camera camera, CancellationToken ct);
+    /// <summary>
+    /// Grabs one still. <paramref name="maxWidth"/> is the largest size the
+    /// consumer can actually show (a grid cell): implementations should ask
+    /// the camera to resize server-side so the wire payload matches the tile
+    /// instead of shipping a full-resolution JPEG. 0 = native resolution,
+    /// for saved snapshots and single-camera views.
+    /// </summary>
+    Task<byte[]?> GrabAsync(Camera camera, int maxWidth, CancellationToken ct);
 }

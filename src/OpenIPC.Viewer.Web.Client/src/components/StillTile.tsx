@@ -14,12 +14,16 @@ import { useI18n } from '../i18n'
 // as SnapshotModal: the endpoint answers 502 when the camera doesn't respond,
 // and an <img> would only show a broken icon. It also means a failed refresh
 // leaves the previous frame on screen instead of blanking the tile.
-export const StillTile = memo(function StillTile({ camera, intervalSeconds, phaseMs }: {
+export const StillTile = memo(function StillTile({ camera, intervalSeconds, phaseMs, maxWidth }: {
   camera: CameraDto
   intervalSeconds: number
   // Start offset inside one interval when the wall is staggered. 0 = the
   // original "all tiles refresh together" behaviour.
   phaseMs: number
+  // Largest useful width of this cell. Sent to the server so the camera
+  // scales the JPEG before sending it, instead of shipping a 4MP frame into
+  // a few-hundred-pixel box.
+  maxWidth: number
 }) {
   const { t } = useI18n()
   const [url, setUrl] = useState<string | null>(null)
@@ -57,7 +61,7 @@ export const StillTile = memo(function StillTile({ camera, intervalSeconds, phas
       }
       controller = new AbortController()
       try {
-        const res = await fetch(api.snapshotUrl(camera.id), {
+        const res = await fetch(api.snapshotUrl(camera.id, maxWidth), {
           credentials: 'same-origin',
           cache: 'no-store',
           // A slow camera must not deliver a late frame into an unmounted (or
@@ -99,7 +103,7 @@ export const StillTile = memo(function StillTile({ camera, intervalSeconds, phas
       // Keep shownRef/staleRef alive: the next effect run reuses the frame
       // that's already on screen instead of flashing an empty tile.
     }
-  }, [camera.id, intervalSeconds, phaseMs])
+  }, [camera.id, intervalSeconds, phaseMs, maxWidth])
 
   return (
     <div className="cell">

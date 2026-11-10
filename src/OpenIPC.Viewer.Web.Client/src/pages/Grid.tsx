@@ -283,6 +283,11 @@ export function Grid() {
 
   const loading = cameras === null || layouts === null
 
+  // A still never needs more pixels than its cell. 1×1 fills the window, so
+  // keep it sharp; denser grids ask the camera for a much smaller JPEG.
+  // Mirrors MajesticSnapshotOptions.ForGridSize in the .NET Core project.
+  const stillMaxWidth = active?.gridSize === 1 ? 1920 : active?.gridSize === 2 ? 960 : 640
+
   // Stagger phase is per *visible camera*: empty cells issue no request and
   // must not consume a slot in the interval.
   const pageCells = Array.from({ length: pageSize }, (_, i) => camById.get(tiles[pageStart + i] ?? ''))
@@ -464,6 +469,7 @@ export function Grid() {
                   camera={cam}
                   intervalSeconds={stillInterval}
                   phaseMs={stillsPhaseMs(stillIndexes[i], stillCount, stillInterval, stagger)}
+                  maxWidth={stillMaxWidth}
                 />
               ) : (
                 <LiveTile key={cam.id} camera={cam} />
