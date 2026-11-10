@@ -154,10 +154,10 @@ jobs:
           cd publish/${{ matrix.rid }}
           tar -czf ../../openipc-viewer-${{ matrix.rid }}.tar.gz .
 
-      # GitHub Actions retention is day-granular (minimum 1 day), so the real
-      # "delete after 6 hours" policy lives in cleanup-artifacts.yml. The
-      # retention-days below is the hard backstop in case scheduled runs are
-      # paused (forks, 60-day inactivity).
+      # GitHub deletes artifacts itself when the retention window expires.
+      # 1 day is the shortest value upload-artifact supports (day-granular),
+      # and is plenty of time to grab a CI build. No scheduled cleanup job:
+      # it would only burn runner minutes duplicating what the platform does.
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
