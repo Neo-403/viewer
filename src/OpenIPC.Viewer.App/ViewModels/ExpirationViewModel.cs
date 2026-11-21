@@ -1,35 +1,35 @@
 using System;
-using System.Globalization;
 using System.Windows.Input;
 using Avalonia;
 using Avalonia.Controls.ApplicationLifetimes;
 using CommunityToolkit.Mvvm.Input;
 using OpenIPC.Viewer.App.Services;
-using OpenIPC.Viewer.Core;
+using OpenIPC.Viewer.Core.Expiration;
 
 namespace OpenIPC.Viewer.App.ViewModels;
 
 /// <summary>
-/// The only view model a time-limited build past its expiry ever creates: no IoC
-/// services, no database, no cameras — just the notice and an exit button.
+/// The only view model a blocked time-limited build ever creates: no IoC
+/// services, no database, no cameras — just the failure reason and an exit button.
 /// </summary>
 public sealed class ExpirationViewModel
 {
-    public ExpirationViewModel()
+    public ExpirationViewModel(ExpirationBlockReason reason)
     {
-        var at = BuildExpiration.ExpiresAtText;
-        ExpiresAtText = at is null
-            ? null
-            : string.Format(CultureInfo.CurrentCulture,
-                Localizer.Instance["Expiration.ExpiresAtFormat"], at);
+        var key = reason == ExpirationBlockReason.TimeUnavailable
+            ? "Expiration.Offline"
+            : "Expiration.Incompatible";
+        Title = Localizer.Instance[$"{key}.Title"];
+        Message = Localizer.Instance[$"{key}.Message"];
+        ExitText = Localizer.Instance["Expiration.Exit"];
         ExitCommand = new RelayCommand(Exit);
     }
 
-    public string Title => Localizer.Instance["Expiration.Title"];
-    public string Message => Localizer.Instance["Expiration.Message"];
-    public string ExitText => Localizer.Instance["Expiration.Exit"];
-    public string? ExpiresAtText { get; }
-    public bool HasExpiresAtText => ExpiresAtText is not null;
+    public string Title { get; }
+    public string Message { get; }
+    public string ExitText { get; }
+    public string? ExpiresAtText => null;
+    public bool HasExpiresAtText => false;
     public ICommand ExitCommand { get; }
 
     private static void Exit()

@@ -14,8 +14,10 @@ namespace OpenIPC.Viewer.Core;
 /// <remarks>
 /// A time-limited build must not be able to replace itself, so Directory.Build.props
 /// also forces <c>UpdateFeed=none</c> for it. This is a convenience / trial-build
-/// control, not a security boundary: the stamp is plain assembly metadata and the
-/// check uses the system clock. No clock-rollback detection by design.
+/// control, not a security boundary: the stamp is plain assembly metadata. At
+/// every startup ExpirationGate verifies the resolved instant against a free
+/// domestic NTP server: there is no cache and no offline fallback. An empty
+/// stamp disables that gate entirely — no network access and no failure path.
 /// </remarks>
 public static class BuildExpiration
 {

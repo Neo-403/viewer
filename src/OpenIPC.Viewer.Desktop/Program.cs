@@ -2,7 +2,7 @@ using System;
 using Avalonia;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
-using OpenIPC.Viewer.Core;
+using OpenIPC.Viewer.Core.Expiration;
 
 namespace OpenIPC.Viewer.Desktop;
 
@@ -19,15 +19,19 @@ internal static class Program
 
         // Headless web-server mode (Phase 20): run Kestrel without Avalonia and
         // return, before the single-instance guard or any GUI service spins up.
-        // It never reaches App.OnFrameworkInitializationCompleted, so an expired
+        // It never reaches App.OnFrameworkInitializationCompleted, so a blocked
         // time-limited build has to be rejected here as well (there is no window
-        // to show the notice in). The normal GUI path keeps going and App shows
-        // the expiry screen instead of the main window.
+        // to show the error in). The normal GUI path reports the same failure in
+        // App and exits. An unlimited build skips the gate entirely.
         if (ServerOnly.IsRequested(args))
         {
-            if (BuildExpiration.IsExpired())
+            try
             {
-                Console.Error.WriteLine("此版本已过期 / This build has expired.");
+                ExpirationGate.Default.CheckAsync().GetAwaiter().GetResult();
+            }
+            catch (ExpirationBlockedException ex)
+            {
+                Console.Error.WriteLine(ex.DisplayMessage);
                 return 1;
             }
             return ServerOnly.Run(args);

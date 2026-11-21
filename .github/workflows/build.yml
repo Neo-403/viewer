@@ -1,23 +1,23 @@
 name: build
 
 on:
-  push:
-    branches: [main]
-    tags: ['v*']
-    paths-ignore:
-      - '**/*.md'
-      - 'docs/**'
-      - '.github/ISSUE_TEMPLATE/**'
-      - 'LICENSE'
-      - '.gitignore'
-  pull_request:
-    branches: [main]
-    paths-ignore:
-      - '**/*.md'
-      - 'docs/**'
-      - '.github/ISSUE_TEMPLATE/**'
-      - 'LICENSE'
-      - '.gitignore'
+  # push:
+  #   branches: [main]
+  #   tags: ['v*']
+  #   paths-ignore:
+  #     - '**/*.md'
+  #     - 'docs/**'
+  #     - '.github/ISSUE_TEMPLATE/**'
+  #     - 'LICENSE'
+  #     - '.gitignore'
+  # pull_request:
+  #   branches: [main]
+  #   paths-ignore:
+  #     - '**/*.md'
+  #     - 'docs/**'
+  #     - '.github/ISSUE_TEMPLATE/**'
+  #     - 'LICENSE'
+  #     - '.gitignore'
   workflow_dispatch:
     inputs:
       publish_release:
@@ -29,7 +29,7 @@ on:
         type: string
         default: ''
       expiry:
-        description: '构建过期:N天,或YYYY-MM-DD(该日为最后可用日,UTC);空=永不过期'
+        description: '构建过期:N天,或YYYY-MM-DD(该日为最后可用日,UTC);空=永不过期(不联网校时)。限期构建每次启动都用国内免费NTP校时,无网络拒绝启动'
         type: string
         default: ''
 
