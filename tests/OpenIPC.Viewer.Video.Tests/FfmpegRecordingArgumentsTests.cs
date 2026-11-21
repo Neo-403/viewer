@@ -32,6 +32,16 @@ public sealed class FfmpegRecordingArgumentsTests
     }
 
     [Fact]
+    public void Only_video_and_optional_audio_are_mapped()
+    {
+        var args = Args();
+        var mapped = new List<string>();
+        for (var i = 0; i < args.Count - 1; i++)
+            if (args[i] == "-map") mapped.Add(args[i + 1]);
+        Assert.Equal(new[] { "0:v", "0:a?" }, mapped);
+    }
+
+    [Fact]
     public void Segment_and_fragmented_mp4_options_are_preserved()
     {
         var args = Args();

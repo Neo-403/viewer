@@ -109,7 +109,8 @@ internal sealed partial class FfmpegRecordingSession : IRecordingSession
     // ffmpeg then exits immediately without ever opening a segment, so REC
     // appears to start but nothing is recorded. AAC is FFmpeg's built-in
     // encoder (always available) and re-encoding an 8 kHz mono G.711 track is
-    // negligible next to the video.
+    // negligible next to the video. Mapping only video and optional audio also
+    // drops ONVIF metadata/data tracks the mp4 muxer cannot hold.
     internal static IReadOnlyList<string> BuildArguments(
         Uri rtspUrl, string outputPattern, TimeSpan segmentDuration, string timeoutFlag) =>
         new[]
@@ -128,6 +129,10 @@ internal sealed partial class FfmpegRecordingSession : IRecordingSession
             // Recordings tab while REC keeps "running" (#91).
             timeoutFlag, RtspTimeoutMicros,
             "-i", rtspUrl.ToString(),
+            // "0:a?" keeps silent cameras working; mapping only video+audio
+            // drops metadata/data tracks that mp4 rejects.
+            "-map", "0:v",
+            "-map", "0:a?",
             "-c:v", "copy",
             "-c:a", "aac",
             "-b:a", "64k",
