@@ -1,4 +1,5 @@
 using System;
+using System.Net;
 using System.Net.Sockets;
 using System.Threading;
 using System.Threading.Tasks;
@@ -35,7 +36,7 @@ public sealed class SntpClock : INtpClock
 
     public SntpClock(TimeSpan? serverTimeout = null)
     {
-        var timeout = serverTimeout ?? TimeSpan.FromSeconds(3);
+        var timeout = serverTimeout ?? TimeSpan.FromSeconds(2);
         if (timeout <= TimeSpan.Zero)
             throw new ArgumentOutOfRangeException(nameof(serverTimeout));
         _serverTimeout = timeout;
@@ -68,6 +69,10 @@ public sealed class SntpClock : INtpClock
     {
         using (var client = new UdpClient())
         {
+            // ReceiveAsync requires an already-bound socket; an unbound
+            // UdpClient only binds lazily inside its synchronous Receive.
+            client.Client.Bind(new IPEndPoint(IPAddress.Any, 0));
+
             var request = new byte[PacketSize];
             request[0] = ClientMode;
 
