@@ -17,25 +17,26 @@ internal static class Program
         System.Diagnostics.Trace.Listeners.Add(new System.Diagnostics.ConsoleTraceListener());
 #endif
 
+        // Time-limited builds verify against domestic NTP on every launch,
+        // before Avalonia, DI, or the single-instance guard starts. Desktop
+        // failures use a native OS dialog; headless mode writes to stderr.
+        // Unlimited builds skip the gate entirely. Mobile hosts gate in App.
+        var serverOnly = ServerOnly.IsRequested(args);
+        try
+        {
+            ExpirationGate.Default.CheckAsync().GetAwaiter().GetResult();
+        }
+        catch (ExpirationBlockedException ex)
+        {
+            if (!serverOnly) NativeErrorDialog.Show(ex.Reason);
+            Console.Error.WriteLine(ex.DisplayMessage);
+            return 1;
+        }
+
         // Headless web-server mode (Phase 20): run Kestrel without Avalonia and
         // return, before the single-instance guard or any GUI service spins up.
-        // It never reaches App.OnFrameworkInitializationCompleted, so a blocked
-        // time-limited build has to be rejected here as well (there is no window
-        // to show the error in). The normal GUI path reports the same failure in
-        // App and exits. An unlimited build skips the gate entirely.
-        if (ServerOnly.IsRequested(args))
-        {
-            try
-            {
-                ExpirationGate.Default.CheckAsync().GetAwaiter().GetResult();
-            }
-            catch (ExpirationBlockedException ex)
-            {
-                Console.Error.WriteLine(ex.DisplayMessage);
-                return 1;
-            }
+        if (serverOnly)
             return ServerOnly.Run(args);
-        }
 
         // Opt-in single-instance mode: when another copy already runs and the
         // user enabled the guard, hand focus to it and bail out before any

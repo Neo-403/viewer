@@ -55,7 +55,7 @@ public sealed class ExpirationBlockedException : Exception
 
     private static string MessageFor(ExpirationBlockReason reason) => reason == ExpirationBlockReason.TimeUnavailable
         ? "无网络环境，需联网后使用 / No network available. Connect to the network before using this build."
-        : "当前版本与当前系统组件不兼容。/ This build is incompatible with the current system components.";
+        : "当前系统环境不支持此应用程序，无法继续运行。/ The current system environment does not support this application.";
 }
 
 public interface INtpClock

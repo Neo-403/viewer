@@ -30,27 +30,24 @@ public sealed class App : Application
     private static readonly TimeSpan MobileSplashMinDuration = TimeSpan.FromSeconds(1.6);
     private static readonly TimeSpan MobileSplashFadeDuration = TimeSpan.FromMilliseconds(400);
 
-    // The error is shown briefly, then the process exits with a failure code —
-    // a blocked time-limited build must never reach the main window.
-    private static readonly TimeSpan StartupFailureDisplayDuration = TimeSpan.FromSeconds(3);
-
     public override void Initialize() => AvaloniaXamlLoader.Load(this);
 
     public override void OnFrameworkInitializationCompleted()
     {
-        // A time-limited build verifies its expiry against domestic NTP time on
-        // every startup — no cached verdict and no offline fallback. Offline or
-        // expired builds show a brief error and exit before any window or view
-        // can start. Unlimited builds skip the gate entirely.
-        try
+        // Desktop hosts gate in Program.Main before Avalonia starts, with a
+        // native OS dialog. Mobile hosts have no dialog here, so a blocked
+        // time-limited build simply exits. Unlimited builds skip the gate.
+        if (ApplicationLifetime is ISingleViewApplicationLifetime)
         {
-            ExpirationGate.Default.CheckAsync().GetAwaiter().GetResult();
-        }
-        catch (ExpirationBlockedException ex)
-        {
-            ShowStartupFailure(ex);
-            base.OnFrameworkInitializationCompleted();
-            return;
+            try
+            {
+                ExpirationGate.Default.CheckAsync().GetAwaiter().GetResult();
+            }
+            catch (ExpirationBlockedException)
+            {
+                Environment.Exit(1);
+                return;
+            }
         }
 
         if (Services is not null)
@@ -66,31 +63,6 @@ public sealed class App : Application
         }
 
         base.OnFrameworkInitializationCompleted();
-    }
-
-    // Desktop and mobile need different roots (Window vs a bare Control), but
-    // both get the same error view model and auto-exit after the brief display.
-    private void ShowStartupFailure(ExpirationBlockedException ex)
-    {
-        var logger = Services?.GetService<ILoggerFactory>()?.CreateLogger(nameof(App));
-        logger?.LogError(ex, "Build verification failed: {Reason}", ex.Reason);
-        Console.Error.WriteLine(ex.DisplayMessage);
-
-        var vm = new ExpirationViewModel(ex.Reason);
-        if (ApplicationLifetime is IClassicDesktopStyleApplicationLifetime desktop)
-        {
-            desktop.MainWindow = new ExpirationWindow { DataContext = vm };
-            DispatcherTimer.RunOnce(() => desktop.Shutdown(1), StartupFailureDisplayDuration);
-        }
-        else if (ApplicationLifetime is ISingleViewApplicationLifetime singleView)
-        {
-            singleView.MainView = new ExpirationView { DataContext = vm };
-            DispatcherTimer.RunOnce(() => Environment.Exit(1), StartupFailureDisplayDuration);
-        }
-        else
-        {
-            Environment.Exit(1); // no GUI lifetime: fail closed
-        }
     }
 
     // Desktop shows a splash that runs migrations + event ingestion with visible
